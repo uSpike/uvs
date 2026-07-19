@@ -1,0 +1,358 @@
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1f2420;
+  background: #f2f4f0;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  letter-spacing: 0;
+}
+
+html,
+body {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #087f9b;
+  outline-offset: 2px;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+thead th[title] {
+  cursor: help;
+  text-decoration: underline dotted rgba(73, 85, 72, 0.58);
+  text-underline-offset: 3px;
+}
+
+.application-shell {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.application-shell.full-bleed {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.application-shell.page-scroll {
+  display: block;
+  overflow: auto;
+}
+
+.application-shell.page-scroll .application-header {
+  min-height: 52px;
+}
+
+.application-shell.page-scroll .application-content {
+  overflow: visible;
+}
+
+.application-header {
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 26px;
+  min-width: 0;
+  padding: 0 18px;
+  border-bottom: 1px solid #d2d7cf;
+  color: #20241f;
+  background: #ffffff;
+}
+
+.application-brand,
+.application-header nav a,
+.quiet-command {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+}
+
+.application-brand {
+  font-size: 14px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.application-brand svg {
+  color: #d89500;
+}
+
+.application-header nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.application-header nav a,
+.quiet-command {
+  min-height: 32px;
+  padding: 0 9px;
+  border-radius: 4px;
+  color: #4b534b;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.application-header nav a:hover,
+.quiet-command:hover {
+  color: #20241f;
+  background: #edf0eb;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-actions form {
+  margin: 0;
+}
+
+.role-label {
+  color: #6b7369;
+  font-size: 11px;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.icon-command {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #d2d7cf;
+  border-radius: 5px;
+  color: #4b534b;
+  background: #ffffff;
+}
+
+.icon-command:hover {
+  border-color: #aab2a7;
+  color: #20241f;
+  background: #edf0eb;
+}
+
+.application-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+  width: min(400px, 100%);
+  padding: 24px;
+  border: 1px solid #cfd5cc;
+  border-radius: 7px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(29, 38, 29, 0.08);
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.section-heading > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #087f9b;
+}
+
+.section-heading h1,
+.section-heading h2,
+.page-heading h1,
+.page-heading h2 {
+  margin: 0;
+  color: #20241f;
+  letter-spacing: 0;
+}
+
+.section-heading h1,
+.page-heading h1 {
+  font-size: 21px;
+}
+
+.section-heading h2,
+.page-heading h2 {
+  font-size: 16px;
+}
+
+.section-heading p,
+.page-heading p {
+  margin: 4px 0 0;
+  color: #687066;
+  font-size: 13px;
+}
+
+.field-label {
+  color: #414840;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.field-help {
+  margin: -3px 0 0;
+  color: #687066;
+  font-size: 11px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="url"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid #bdc5ba;
+  border-radius: 5px;
+  color: #20241f;
+  background: #ffffff;
+}
+
+input[type="file"] {
+  width: 100%;
+  min-width: 0;
+  color: #50584f;
+  font-size: 12px;
+}
+
+.primary-command,
+.secondary-command,
+.danger-command {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: max-content;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.primary-command {
+  border-color: #087f9b;
+  color: #ffffff;
+  background: #087f9b;
+}
+
+.primary-command:hover {
+  border-color: #056c84;
+  background: #056c84;
+}
+
+.secondary-command {
+  border-color: #bcc4b9;
+  color: #30362f;
+  background: #ffffff;
+}
+
+.secondary-command:hover {
+  border-color: #929c90;
+  background: #edf0eb;
+}
+
+.danger-command {
+  border-color: #b94a51;
+  color: #8e282f;
+  background: #fffafa;
+}
+
+.form-message {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.form-message.error {
+  border-color: #d9a1a5;
+  color: #812930;
+  background: #fff4f4;
+}
+
+.form-message.success {
+  border-color: #91c69e;
+  color: #246b38;
+  background: #f2fbf4;
+}
+
+@media (max-width: 620px) {
+  .application-header {
+    gap: 8px;
+    padding: 0 9px;
+  }
+
+  .application-brand span,
+  .role-label,
+  .application-header nav a svg {
+    display: none;
+  }
+
+  .application-header nav a,
+  .quiet-command {
+    padding-inline: 7px;
+  }
+}

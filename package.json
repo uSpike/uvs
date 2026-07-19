@@ -1,0 +1,32 @@
+{
+  "name": "reco-web-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "check": "svelte-kit sync && svelte-check --config ./svelte.config.js --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "start": "node build"
+  },
+  "dependencies": {
+    "@lucide/svelte": "^1.24.0",
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/kit": "^2.69.3",
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "svelte": "^5.56.4",
+    "svelte-check": "^4.7.2",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

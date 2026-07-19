@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.svelte-kit/
+build/
+.vite/
+.env
+*-smoke.png
+fixture-smoke.mp4
+data/
