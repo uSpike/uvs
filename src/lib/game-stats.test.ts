@@ -3,7 +3,10 @@ import {
   calculateGameStatistics,
   calculatePointResults,
   calculatePointState,
+  calculateScoreAtTime,
   autoCameraEndzoneAtTime,
+  gamePlaybackAnnotations,
+  latestHandlerSpatialAnnotation,
   latestPointTimeMs,
   type GameEventPayload,
   type GameEventType,
@@ -26,6 +29,7 @@ function event(
     timeMs,
     type,
     payload,
+    annotations: [],
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
   };
@@ -87,6 +91,51 @@ function gameData(points: TrackingPoint[], standaloneEvents: TrackingEvent[] = [
 }
 
 describe('game statistics', () => {
+  it('carries the latest possession or reception position forward for the next throw', () => {
+    const possession = event(1, 1_500, 'possession_start', { playerId: 1 });
+    possession.annotations = [{
+      id: 1,
+      role: 'handler',
+      playerId: 1,
+      timeMs: 1_500,
+      frameIndex: 45,
+      panoramaYaw: -0.4,
+      panoramaPitch: 0.05,
+    }];
+    const completion = event(1, 2_200, 'completion', { throwerId: 1, receiverId: 2 });
+    completion.annotations = [{
+      id: 3,
+      role: 'thrower',
+      playerId: 1,
+      timeMs: 1_500,
+      frameIndex: 45,
+      panoramaYaw: -0.4,
+      panoramaPitch: 0.05,
+    }, {
+      id: 2,
+      role: 'receiver',
+      playerId: 2,
+      timeMs: 2_200,
+      frameIndex: 66,
+      panoramaYaw: 0.25,
+      panoramaPitch: -0.02,
+    }];
+    const recordedPoint = point({ events: [possession, completion] });
+
+    expect(latestHandlerSpatialAnnotation(recordedPoint, 1)).toMatchObject({
+      role: 'handler',
+      panoramaYaw: -0.4,
+    });
+    expect(latestHandlerSpatialAnnotation(recordedPoint, 2)).toMatchObject({
+      role: 'receiver',
+      panoramaYaw: 0.25,
+    });
+    expect(gamePlaybackAnnotations(gameData([recordedPoint]))).toMatchObject([
+      { eventId: possession.id, role: 'handler', playerId: 1, timeMs: 1_500 },
+      { eventId: completion.id, role: 'receiver', playerId: 2, timeMs: 2_200 },
+    ]);
+  });
+
   it('frames the lineup end before a pull and infers the next end after scores', () => {
     const first = point({
       events: [event(1, 5_000, 'goal', { throwerId: 1, receiverId: 2, callahan: false })],
@@ -144,6 +193,28 @@ describe('game statistics', () => {
       { pointId: 2, sequenceNumber: 2, ourScore: 4, opponentScore: 3, result: 'lost', breakAgainst: true },
       { pointId: 3, sequenceNumber: 3, ourScore: 4, opponentScore: 3, result: 'open', breakAgainst: false },
     ]);
+  });
+
+  it('calculates the current score at the playback time', () => {
+    const first = point({
+      events: [event(1, 5_000, 'goal', { throwerId: 1, receiverId: 2, callahan: false })],
+    });
+    const second = point({
+      id: 2,
+      sequenceNumber: 2,
+      startTimeMs: 8_000,
+      events: [event(2, 12_000, 'conceded', { callahan: false })],
+    });
+    const data = gameData(
+      [first, second],
+      [event(null, 7_000, 'score_set', { ourScore: 4, opponentScore: 2 })],
+    );
+
+    expect(calculateScoreAtTime(data, 0)).toEqual({ ourScore: 0, opponentScore: 0 });
+    expect(calculateScoreAtTime(data, 5_000)).toEqual({ ourScore: 1, opponentScore: 0 });
+    expect(calculateScoreAtTime(data, 7_000)).toEqual({ ourScore: 4, opponentScore: 2 });
+    expect(calculateScoreAtTime(data, 11_999)).toEqual({ ourScore: 4, opponentScore: 2 });
+    expect(calculateScoreAtTime(data, 12_000)).toEqual({ ourScore: 4, opponentScore: 3 });
   });
 
   it('uses paper player totals and point summaries without inventing play-by-play', () => {

@@ -9,7 +9,6 @@
     EllipsisVertical,
     FileVideo,
     Gauge,
-    Info,
     Minus,
     Pause,
     Play,
@@ -38,19 +37,16 @@
     autoCameraTarget,
     autoCameraSubjectsForDetections,
     buildDetectionAreaHistoryTimeline,
-    detectionsAcceptedForAutoCamera,
     requiredAutoCameraFov,
+    selectActionRegionDetections,
     stepAutoCamera,
+    type ActionRegionDetectionState,
     type AutoCameraConfig,
     type AutoCameraPose,
     type AutoCameraVelocity,
     type DetectionAreaHistoryTimeline,
   } from './auto-camera';
-  import {
-    detectionIsInsideCameraFov,
-    drawDetectionOverlay,
-    type DetectionOverlayView,
-  } from './detection-overlay';
+  import { drawDetectionOverlay, type DetectionOverlayView } from './detection-overlay';
   import {
     DEFAULT_FOV_DEGREES,
     MAX_FOV_DEGREES,
@@ -61,12 +57,17 @@
     panoramaDisplaySideCenterYaw,
     panoramaCenter,
     panoramaPointIsOnDisplaySide,
+    projectPanoramaPoint,
+    unprojectPerspectivePoint,
   } from './perspective';
   import { canvasPixelRatio } from './render-resolution';
   import type {
     GameViewerSettings,
     RecoVideoViewerSource,
+    RecoViewerPlaybackMarker,
     RecoViewerPlaybackState,
+    RecoViewerSpatialMarker,
+    RecoViewerSpatialPoint,
     RecoViewerStatus,
     RecoViewerViewState,
   } from './viewer-types';
@@ -102,6 +103,7 @@
     metadata: MetadataTimeline | null;
     areaHistory: DetectionAreaHistoryTimeline | null;
     minimumAreaHistorySeconds: number;
+    actionStateByDetection: Map<WebDetection, ActionRegionDetectionState>;
     view: DetectionOverlayView;
   }
 
@@ -125,6 +127,20 @@
   export let onSaveSettings: (() => void) | undefined = undefined;
   /** Restrict automatic framing to one video-side endzone; null uses the full field. */
   export let autoCameraEndzone: TeamEndzone | null = null;
+  /** Media times where every visible detection becomes a trusted automatic-camera baseline. */
+  export let trustedDetectionBaselineTimesMs: readonly number[] = [];
+  /** Whether the next primary click should place a manual event annotation. */
+  export let spatialPlacementActive = false;
+  /** Draft manual annotations displayed on their selected video frames. */
+  export let spatialMarkers: RecoViewerSpatialMarker[] = [];
+  /** Saved action positions that may briefly pulse during ordinary playback. */
+  export let playbackMarkers: RecoViewerPlaybackMarker[] = [];
+  /** Callback fired when the operator manually marks a position on the video. */
+  export let onSpatialPointPlace: ((point: RecoViewerSpatialPoint) => void) | undefined = undefined;
+  /** Callback fired while an existing draft marker is dragged to a more precise position. */
+  export let onSpatialPointAdjust:
+    | ((index: number, point: RecoViewerSpatialPoint) => void)
+    | undefined = undefined;
 
   let videoInput: HTMLInputElement;
   let metadataInput: HTMLInputElement;
@@ -171,6 +187,9 @@
   let defaultRigOrientation = LEVEL_ORIENTATION;
   let orientationControlsOpen = false;
   let detectionAreaHistoryTimeline: DetectionAreaHistoryTimeline | null = null;
+  let detectionAreaHistorySource: MetadataTimeline | null = null;
+  let detectionAreaHistoryDuration = -1;
+  let detectionAreaHistoryBaselineKey = '';
   let autoCameraEnabled = false;
   let autoCameraOnPlay = true;
   let autoControlsOpen = false;
@@ -193,7 +212,7 @@
   let playing = false;
   let muted = false;
   let showDetections = false;
-  let showDetails = false;
+  let showPlaybackMarkers = false;
   let clockRequest = 0;
   let mounted = false;
   let appliedSource: RecoVideoViewerSource | null = null;
@@ -208,6 +227,7 @@
   let pointerStartPanY = 0;
   let pointerStartYaw = 0;
   let pointerStartPitch = 0;
+  let adjustingSpatialMarker: number | null = null;
 
   $: localFilesEnabled = allowLocalFiles && source === null;
   $: if (source !== appliedSource) {
@@ -218,36 +238,35 @@
   }
   $: if (autoCameraEndzone !== appliedAutoCameraEndzone) {
     appliedAutoCameraEndzone = autoCameraEndzone;
-    invalidateVirtualAutoCamera();
+    // Preserve motion when a point releases the lineup-endzone constraint.
+    // Explicit seeks already invalidate the camera before changing timeline position.
     schedulePlaybackClock();
   }
   $: currentFrame = timeline
     ? frameIndexAtTime(currentTime, duration, timeline.lastFrameIndex)
     : 0;
-  $: detectionAreaHistoryTimeline = timeline
-    ? buildDetectionAreaHistoryTimeline(timeline, duration)
-    : null;
+  $: syncDetectionAreaHistory(
+    timeline,
+    duration,
+    trustedDetectionBaselineTimesMs,
+  );
   $: hasAutoCameraData =
     timeline?.detectionSamples.some((sample) =>
       sample.detections.some((detection) => detection.panorama !== null),
     ) ?? false;
   $: frameDetections = timeline ? detectionsAtFrame(timeline, currentFrame) : [];
   $: currentDetections = showDetections ? frameDetections : NO_DETECTIONS;
-  $: framingDetections = detectionsInAutoCameraEndzone(
-    detectionsAcceptedForAutoCamera(
+  $: currentActionRegion = selectActionRegionDetections(
+    detectionsInAutoCameraEndzone(
       frameDetections,
-      detectionAreaHistoryTimeline,
-      autoCameraConfig.newAreaDelaySeconds,
-      (detection) =>
-        detectionIsInsideCameraFov(detection, {
-          ...virtualAutoCameraPose,
-          aspect: perspectiveAspect,
-          tilt: rigOrientation.tilt,
-          roll: rigOrientation.roll,
-        }),
+      timeline?.manifest.panorama_extent ?? null,
     ),
-    timeline?.manifest.panorama_extent ?? null,
+    detectionAreaHistoryTimeline,
+    autoCameraConfig.newAreaDelaySeconds,
+    virtualAutoCameraPose,
+    autoCameraConfig.actionJoinDistanceDegrees,
   );
+  $: framingDetections = currentActionRegion.included;
   $: framingSubjects = autoCameraSubjectsForRegion(
     framingDetections,
     timeline?.manifest.panorama_extent ?? null,
@@ -257,6 +276,14 @@
     viewportWidth > 0 && viewportHeight > 0
       ? viewportWidth / viewportHeight
       : PERSPECTIVE_ASPECT;
+  $: visiblePlaybackMarkers = showPlaybackMarkers
+    ? playbackMarkers.flatMap((marker) => {
+        const elapsedMs = currentTime * 1000 - marker.timeMs;
+        if (elapsedMs < -100 || elapsedMs > 950) return [];
+        const position = panoramaMarkerPosition(marker.panoramaYaw, marker.panoramaPitch);
+        return position ? [{ ...marker, ...position }] : [];
+      })
+    : [];
   $: onPlaybackChange?.({
     currentTime,
     duration,
@@ -280,11 +307,37 @@
     error: loadError,
     warning: loadWarning,
   });
+
+  function syncDetectionAreaHistory(
+    metadata: MetadataTimeline | null,
+    videoDuration: number,
+    baselineTimesMs: readonly number[],
+  ): void {
+    const baselineTimesSeconds = baselineTimesMs
+      .filter((timeMs) => Number.isFinite(timeMs) && timeMs >= 0)
+      .map((timeMs) => timeMs / 1000)
+      .sort((left, right) => left - right);
+    const baselineKey = baselineTimesSeconds.join(',');
+    if (
+      metadata === detectionAreaHistorySource &&
+      videoDuration === detectionAreaHistoryDuration &&
+      baselineKey === detectionAreaHistoryBaselineKey
+    ) {
+      return;
+    }
+    detectionAreaHistorySource = metadata;
+    detectionAreaHistoryDuration = videoDuration;
+    detectionAreaHistoryBaselineKey = baselineKey;
+    detectionAreaHistoryTimeline = metadata
+      ? buildDetectionAreaHistoryTimeline(metadata, videoDuration, baselineTimesSeconds)
+      : null;
+  }
   $: onSettingsChange?.({
     version: 1,
     rigTiltRadians: rigOrientation.tilt,
     rigRollRadians: rigOrientation.roll,
     fovDegrees: defaultPerspectiveFov,
+    recordingMode: settings?.recordingMode ?? 'video_assisted',
     autoCamera: { ...autoCameraConfig },
   });
 
@@ -308,6 +361,7 @@
     metadata: timeline,
     areaHistory: detectionAreaHistoryTimeline,
     minimumAreaHistorySeconds: autoCameraConfig.newAreaDelaySeconds,
+    actionStateByDetection: currentActionRegion.stateByDetection,
     view: {
       width: sceneWidth,
       height: sceneHeight,
@@ -321,8 +375,6 @@
         tilt: rigOrientation.tilt,
         roll: rigOrientation.roll,
       },
-      autoCamera: virtualAutoCameraPose,
-      autoCameraAspect: perspectiveAspect,
     },
   });
   $: queuePerspectiveFrame({
@@ -350,10 +402,12 @@
       schedulePlaybackClock();
     });
     observer.observe(viewportElement);
+    window.addEventListener('keydown', handlePlaybackKeydown);
 
     return () => {
       mounted = false;
       observer.disconnect();
+      window.removeEventListener('keydown', handlePlaybackKeydown);
     };
   });
 
@@ -768,6 +822,12 @@
     if (!videoUrl || event.button !== 0) {
       return;
     }
+    if (spatialPlacementActive) {
+      event.preventDefault();
+      const point = spatialPointAtClient(event.clientX, event.clientY);
+      if (point) onSpatialPointPlace?.(point);
+      return;
+    }
     if (perspectiveMode && autoCameraEnabled) {
       disableAutoCameraForManualControl();
     }
@@ -807,6 +867,109 @@
       activePointer = null;
       viewportElement.releasePointerCapture(event.pointerId);
     }
+  }
+
+  function spatialPointAtClient(clientX: number, clientY: number): RecoViewerSpatialPoint | null {
+    if (!timeline || !viewportElement) return null;
+    const rect = viewportElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    let panorama: { yaw: number; pitch: number } | null;
+    if (perspectiveMode) {
+      panorama = unprojectPerspectivePoint(
+        { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height },
+        {
+          yaw: perspectiveYaw,
+          pitch: perspectivePitch,
+          fovDegrees: perspectiveFov,
+          aspect: perspectiveAspect,
+          tilt: rigOrientation.tilt,
+          roll: rigOrientation.roll,
+        },
+      );
+    } else {
+      const normalizedX = 0.5 +
+        (clientX - rect.left - rect.width / 2 - panX) / Math.max(1, sceneWidth * zoom);
+      const normalizedY = 0.5 +
+        (clientY - rect.top - rect.height / 2 - panY) / Math.max(1, sceneHeight * zoom);
+      if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) return null;
+      const extent = timeline.manifest.panorama_extent;
+      panorama = {
+        yaw: extent.yaw_min + normalizedX * (extent.yaw_max - extent.yaw_min),
+        pitch: extent.pitch_max - normalizedY * (extent.pitch_max - extent.pitch_min),
+      };
+    }
+    if (!panorama) return null;
+    return {
+      timeMs: Math.round(currentTime * 1000),
+      frameIndex: currentFrame,
+      panoramaYaw: panorama.yaw,
+      panoramaPitch: panorama.pitch,
+      clientX,
+      clientY,
+    };
+  }
+
+  function spatialMarkerPosition(point: RecoViewerSpatialPoint): { x: number; y: number } | null {
+    if (!timeline || point.frameIndex !== currentFrame) return null;
+    return panoramaMarkerPosition(point.panoramaYaw, point.panoramaPitch);
+  }
+
+  function panoramaMarkerPosition(yaw: number, pitch: number): { x: number; y: number } | null {
+    if (!timeline) return null;
+    if (perspectiveMode) {
+      const normalized = projectPanoramaPoint(
+        { yaw, pitch },
+        {
+          yaw: perspectiveYaw,
+          pitch: perspectivePitch,
+          fovDegrees: perspectiveFov,
+          aspect: perspectiveAspect,
+          tilt: rigOrientation.tilt,
+          roll: rigOrientation.roll,
+        },
+      );
+      return normalized
+        ? { x: normalized.x * viewportWidth, y: normalized.y * viewportHeight }
+        : null;
+    }
+    const extent = timeline.manifest.panorama_extent;
+    const yawSpan = extent.yaw_max - extent.yaw_min;
+    const pitchSpan = extent.pitch_max - extent.pitch_min;
+    if (yawSpan <= 0 || pitchSpan <= 0) return null;
+    const normalizedX = (yaw - extent.yaw_min) / yawSpan;
+    const normalizedY = (extent.pitch_max - pitch) / pitchSpan;
+    return {
+      x: viewportWidth / 2 + panX + (normalizedX - 0.5) * sceneWidth * zoom,
+      y: viewportHeight / 2 + panY + (normalizedY - 0.5) * sceneHeight * zoom,
+    };
+  }
+
+  function beginSpatialMarkerAdjust(event: PointerEvent, index: number): void {
+    if (event.button !== 0 || !onSpatialPointAdjust) return;
+    event.preventDefault();
+    event.stopPropagation();
+    adjustingSpatialMarker = index;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveSpatialMarker(event: PointerEvent, index: number): void {
+    if (adjustingSpatialMarker !== index || !onSpatialPointAdjust) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = spatialPointAtClient(event.clientX, event.clientY);
+    if (!point) return;
+    const existing = spatialMarkers[index]?.point;
+    onSpatialPointAdjust(index, existing
+      ? { ...point, timeMs: existing.timeMs, frameIndex: existing.frameIndex }
+      : point);
+  }
+
+  function endSpatialMarkerAdjust(event: PointerEvent, index: number): void {
+    if (adjustingSpatialMarker !== index) return;
+    event.preventDefault();
+    event.stopPropagation();
+    adjustingSpatialMarker = null;
+    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
   }
 
   function handleWheel(event: WheelEvent): void {
@@ -983,34 +1146,26 @@
       duration,
       timeline.lastFrameIndex,
     );
-    const isInsideCurrentFov = (detection: WebDetection) =>
-      detectionIsInsideCameraFov(detection, {
-        ...virtualAutoCameraPose,
-        aspect: perspectiveAspect,
-        tilt: rigOrientation.tilt,
-        roll: rigOrientation.roll,
-      });
-    const acceptedDetections = detectionsInAutoCameraEndzone(
-      detectionsAcceptedForAutoCamera(
-        detections,
+    const currentSelection = selectActionRegionDetections(
+      detectionsInAutoCameraEndzone(detections, timeline.manifest.panorama_extent),
+      detectionAreaHistoryTimeline,
+      autoCameraConfig.newAreaDelaySeconds,
+      virtualAutoCameraPose,
+      autoCameraConfig.actionJoinDistanceDegrees,
+    );
+    const subjects = autoCameraSubjectsForDetections(currentSelection.included);
+    for (const sample of detectionSamplesInFrameRange(timeline, mediaFrame, lookAheadFrame)) {
+      const futureSelection = selectActionRegionDetections(
+        detectionsInAutoCameraEndzone(
+          sample.detections,
+          timeline.manifest.panorama_extent,
+        ),
         detectionAreaHistoryTimeline,
         autoCameraConfig.newAreaDelaySeconds,
-        isInsideCurrentFov,
-      ),
-      timeline.manifest.panorama_extent,
-    );
-    const subjects = autoCameraSubjectsForDetections(acceptedDetections);
-    for (const sample of detectionSamplesInFrameRange(timeline, mediaFrame, lookAheadFrame)) {
-      const acceptedFutureDetections = detectionsInAutoCameraEndzone(
-        detectionsAcceptedForAutoCamera(
-          sample.detections,
-          detectionAreaHistoryTimeline,
-          autoCameraConfig.newAreaDelaySeconds,
-          isInsideCurrentFov,
-        ),
-        timeline.manifest.panorama_extent,
+        virtualAutoCameraPose,
+        autoCameraConfig.actionJoinDistanceDegrees,
       );
-      subjects.push(...autoCameraSubjectsForDetections(acceptedFutureDetections));
+      subjects.push(...autoCameraSubjectsForDetections(futureSelection.included));
     }
     if (subjects.length === 0) {
       subjects.push(...autoCameraSubjectsForRegion([], timeline.manifest.panorama_extent));
@@ -1151,10 +1306,7 @@
     if (target?.matches('input, button')) {
       return;
     }
-    if (event.code === 'Space') {
-      event.preventDefault();
-      void togglePlayback();
-    } else if (event.key === '+' || event.key === '=') {
+    if (event.key === '+' || event.key === '=') {
       if (perspectiveMode) {
         changeFov(0.8);
       } else {
@@ -1168,6 +1320,35 @@
       }
     } else if (event.key === '0') {
       resetView();
+    }
+  }
+
+  function handlePlaybackKeydown(event: KeyboardEvent): void {
+    if (
+      event.repeat ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      !videoElement ||
+      !videoUrl
+    ) return;
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.matches('input, select, textarea') ||
+      target?.isContentEditable ||
+      target?.closest('[contenteditable="true"]')
+    ) return;
+
+    const key = event.key.toLowerCase();
+    if (event.code === 'Space') {
+      event.preventDefault();
+      pause();
+    } else if (key === 'a') {
+      event.preventDefault();
+      skipBy(-1);
+    } else if (key === 'd') {
+      event.preventDefault();
+      skipBy(1);
     }
   }
 
@@ -1307,6 +1488,7 @@
       frame.metadata,
       frame.areaHistory,
       frame.minimumAreaHistorySeconds,
+      frame.actionStateByDetection,
       frame.view,
     );
     lastDetectionOverlayDrawAt = timestamp;
@@ -1435,6 +1617,7 @@
       bind:this={viewportElement}
       class="viewport"
       class:panning={activePointer !== null}
+      class:spatial-placement={spatialPlacementActive}
       role="region"
       aria-label="Panorama video viewport"
       onpointerdown={beginPan}
@@ -1498,14 +1681,44 @@
         </div>
       {/if}
 
-      {#if showDetails && timeline && videoUrl}
-        <div class="viewport-readout">
-          <span>Frame {currentFrame.toLocaleString()}</span>
-          <span>{mappedDetectionCount} detections</span>
-          {#if perspectiveMode}
-            <span>FOV {Math.round(perspectiveFov)}°</span>
-          {/if}
+      {#each visiblePlaybackMarkers as marker (marker.id)}
+        <div
+          class="playback-action-marker"
+          class:possession={marker.tone === 'possession'}
+          class:completion={marker.tone === 'completion'}
+          class:turnover={marker.tone === 'turnover'}
+          class:goal={marker.tone === 'goal'}
+          class:defense={marker.tone === 'defense'}
+          style:left={`${marker.x}px`}
+          style:top={`${marker.y}px`}
+          aria-hidden="true"
+        >
+          <span><i></i></span>
+          <small><strong>{marker.label}</strong>{marker.detail}</small>
         </div>
+      {/each}
+
+      {#each spatialMarkers as marker, index}
+        {@const markerPosition = spatialMarkerPosition(marker.point)}
+        {#if markerPosition}
+          <button
+            class="spatial-marker"
+            class:adjusting={adjustingSpatialMarker === index}
+            type="button"
+            style:left={`${markerPosition.x}px`}
+            style:top={`${markerPosition.y}px`}
+            aria-label={`Move ${marker.label} position`}
+            title={`Drag to adjust ${marker.label}`}
+            onpointerdown={(event) => beginSpatialMarkerAdjust(event, index)}
+            onpointermove={(event) => moveSpatialMarker(event, index)}
+            onpointerup={(event) => endSpatialMarkerAdjust(event, index)}
+            onpointercancel={(event) => endSpatialMarkerAdjust(event, index)}
+          ><span aria-hidden="true">•</span><small>{marker.label}</small></button>
+        {/if}
+      {/each}
+
+      {#if spatialPlacementActive}
+        <div class="spatial-placement-prompt"><kbd>S</kbd><span>Click the player’s position</span><small>Esc cancels</small></div>
       {/if}
 
       {#if dragActive}
@@ -1600,16 +1813,17 @@
 
         <div class="auto-camera-status">
           <span class:active={autoCameraEnabled}></span>
-          <strong>{framingSubjects.length} / {mappedDetectionCount}</strong>
-          <span>detections included</span>
+          <strong>{framingDetections.length} / {mappedDetectionCount}</strong>
+          <span>detections in action</span>
           <span class="waiting-count">
-            {Math.max(0, mappedDetectionCount - framingSubjects.length)} waiting
+            {Math.max(0, mappedDetectionCount - framingDetections.length)} outside
           </span>
         </div>
 
         <div class="detection-box-legend" aria-label="Detection box colors">
           <span><i class="included" aria-hidden="true"></i>Included</span>
-          <span><i class="pending" aria-hidden="true"></i>New outside auto FOV</span>
+          <span><i class="pending" aria-hidden="true"></i>New</span>
+          <span><i class="excluded" aria-hidden="true"></i>Outside</span>
         </div>
 
         <div class="auto-control">
@@ -1626,6 +1840,20 @@
           <output>
             {autoCameraConfig.newAreaDelaySeconds.toFixed(1)}s
           </output>
+        </div>
+
+        <div class="auto-control">
+          <span class="control-label">Action reach</span>
+          <input
+            type="range"
+            min="4"
+            max="30"
+            step="1"
+            value={autoCameraConfig.actionJoinDistanceDegrees}
+            aria-label="Automatic camera action join distance"
+            oninput={(event) => setAutoCameraSetting('actionJoinDistanceDegrees', event)}
+          />
+          <output>{Math.round(autoCameraConfig.actionJoinDistanceDegrees)}°</output>
         </div>
 
         <div class="auto-control">
@@ -1834,19 +2062,6 @@
       </button>
     </div>
 
-    <button
-      class="icon-button"
-      class:active={showDetails}
-      type="button"
-      aria-label={showDetails ? 'Hide video details' : 'Show video details'}
-      aria-pressed={showDetails}
-      title={showDetails ? 'Hide frame, detection, and FOV details' : 'Show frame, detection, and FOV details'}
-      disabled={!timeline || !videoUrl}
-      onclick={() => (showDetails = !showDetails)}
-    >
-      <Info size={17} aria-hidden="true" />
-    </button>
-
     <details class="view-options">
       <summary class="icon-button" aria-label="View options" title="View options">
         <EllipsisVertical size={18} aria-hidden="true" />
@@ -1868,6 +2083,10 @@
         <label class="switch" class:disabled={!timeline}>
           <input type="checkbox" bind:checked={showDetections} disabled={!timeline} />
           <span>Detections</span>
+        </label>
+        <label class="switch" class:disabled={playbackMarkers.length === 0} title="Flash saved action positions during playback">
+          <input type="checkbox" bind:checked={showPlaybackMarkers} disabled={playbackMarkers.length === 0} />
+          <span>Action markers</span>
         </label>
       </div>
     </details>

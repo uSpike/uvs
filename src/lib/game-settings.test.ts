@@ -23,7 +23,18 @@ describe('game viewer settings', () => {
     expect(settings.rigTiltRadians).toBe(0.12);
     expect(settings.rigRollRadians).toBe(-0.04);
     expect(settings.fovDegrees).toBe(75);
+    expect(settings.recordingMode).toBe('video_assisted');
     expect(settings.autoCamera.newAreaDelaySeconds).toBe(5);
+    expect(settings.autoCamera.actionJoinDistanceDegrees).toBe(10);
+  });
+
+  it('migrates settings written before recording modes to video-assisted entry', () => {
+    const settings = defaultGameViewerSettings(metadata);
+    const { recordingMode: _recordingMode, autoCamera, ...legacy } = settings;
+    const { actionJoinDistanceDegrees: _actionReach, ...legacyAutoCamera } = autoCamera;
+    const migrated = parseGameViewerSettings({ ...legacy, autoCamera: legacyAutoCamera });
+    expect(migrated.recordingMode).toBe('video_assisted');
+    expect(migrated.autoCamera.actionJoinDistanceDegrees).toBe(10);
   });
 
   it('round-trips a valid settings payload', () => {

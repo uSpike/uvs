@@ -336,7 +336,7 @@ describe('GameTrackingRepository', () => {
     ).toMatchObject({ timePlayedMs: 1_000, pointsPlayed: 1, goals: 1, plusMinus: 1, oPointsWon: 1 });
   });
 
-  it('enforces active-player and possession boundaries while allowing incomplete defenders', () => {
+  it('records a positioned defensive action while enforcing player and possession boundaries', () => {
     const { tracking, game, lineId, players } = configuredGame();
     const started = tracking.startPoint(game.token, {
       lineId,
@@ -367,14 +367,36 @@ describe('GameTrackingRepository', () => {
       payload: { defenderId: players.devon },
     })).toThrow('must be active');
 
-    const defended = tracking.addEvent(game.token, {
+    expect(() => tracking.addEvent(game.token, {
       pointId,
       timeMs: 2_000,
       type: 'defended',
       payload: { defenderId: null },
+    })).toThrow('Select the defender');
+
+    const defended = tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'defended',
+      payload: { defenderId: players.alex },
+      annotations: [{
+        role: 'defender',
+        playerId: players.alex,
+        timeMs: 2_000,
+        frameIndex: 60,
+        panoramaYaw: -0.2,
+        panoramaPitch: 0.04,
+      }],
     });
     expect(defended.currentPointState?.possession).toBe('offense');
-    expect(defended.statistics.warnings).toContain('Point 1 has an incomplete defended.');
+    expect(defended.data.points[0].events[0]).toMatchObject({
+      type: 'defended',
+      payload: { defenderId: players.alex },
+      annotations: [{ role: 'defender', playerId: players.alex, panoramaYaw: -0.2 }],
+    });
+    expect(
+      defended.statistics.playerStatistics.find((stats) => stats.playerId === players.alex),
+    ).toMatchObject({ blocks: 1 });
   });
 
   it('requires thrower and receiver attribution for video events', () => {
@@ -436,6 +458,56 @@ describe('GameTrackingRepository', () => {
       },
     });
     expect(turnover.currentPointState?.possession).toBe('defense');
+  });
+
+  it('stores manual panorama positions with event roles and preserves them during form edits', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'offense',
+      startTimeMs: 1_000,
+      pullerPlayerId: null,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: {},
+    }).currentPointId!;
+
+    const added = tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_400,
+      type: 'completion',
+      payload: { throwerId: players.alex, receiverId: players.blair },
+      annotations: [
+        {
+          role: 'thrower',
+          playerId: players.alex,
+          timeMs: 2_000,
+          frameIndex: 60,
+          panoramaYaw: -0.42,
+          panoramaPitch: 0.08,
+        },
+        {
+          role: 'receiver',
+          playerId: players.blair,
+          timeMs: 2_400,
+          frameIndex: 72,
+          panoramaYaw: 0.31,
+          panoramaPitch: -0.03,
+        },
+      ],
+    });
+    const event = added.data.points[0].events[0];
+    expect(event.annotations).toMatchObject([
+      { role: 'thrower', playerId: players.alex, frameIndex: 60, panoramaYaw: -0.42 },
+      { role: 'receiver', playerId: players.blair, frameIndex: 72, panoramaYaw: 0.31 },
+    ]);
+
+    const edited = tracking.updateEvent(game.token, event.id, {
+      pointId,
+      timeMs: 2_400,
+      type: 'completion',
+      payload: { throwerId: players.alex, receiverId: players.casey },
+    });
+    expect(edited.data.points[0].events[0].annotations).toHaveLength(2);
   });
 
   it('edits and deletes historical entries with full recalculation', () => {

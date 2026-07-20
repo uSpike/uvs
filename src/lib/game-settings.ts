@@ -12,6 +12,9 @@ import {
 const MAX_TILT_RADIANS = (30 * Math.PI) / 180;
 const MAX_ROLL_RADIANS = (15 * Math.PI) / 180;
 
+/** Event-entry interface used while recording statistics for a video game. */
+export type GameRecordingMode = 'video_assisted' | 'forms';
+
 /** Persisted camera configuration for one game. */
 export interface GameViewerSettings {
   /** Settings schema version. */
@@ -22,6 +25,8 @@ export interface GameViewerSettings {
   rigRollRadians: number;
   /** Initial vertical field of view in degrees. */
   fovDegrees: number;
+  /** Preferred statistics-entry interface for this game. */
+  recordingMode: GameRecordingMode;
   /** Automatic camera tuning. */
   autoCamera: AutoCameraConfig;
 }
@@ -33,6 +38,7 @@ export function defaultGameViewerSettings(metadata: MetadataTimeline | null): Ga
     rigTiltRadians: metadata?.manifest.rig_orientation.tilt ?? 0,
     rigRollRadians: metadata?.manifest.rig_orientation.roll ?? 0,
     fovDegrees: DEFAULT_FOV_DEGREES,
+    recordingMode: 'video_assisted',
     autoCamera: { ...DEFAULT_AUTO_CAMERA_CONFIG },
   };
 }
@@ -65,6 +71,7 @@ export function parseGameViewerSettings(value: unknown): GameViewerSettings {
       MAX_FOV_DEGREES,
       'Field of view',
     ),
+    recordingMode: parseRecordingMode(object.recordingMode),
     autoCamera: {
       newAreaDelaySeconds: requireRange(
         autoCamera.newAreaDelaySeconds,
@@ -72,6 +79,15 @@ export function parseGameViewerSettings(value: unknown): GameViewerSettings {
         10,
         'New area delay',
       ),
+      actionJoinDistanceDegrees:
+        autoCamera.actionJoinDistanceDegrees === undefined
+          ? DEFAULT_AUTO_CAMERA_CONFIG.actionJoinDistanceDegrees
+          : requireRange(
+              autoCamera.actionJoinDistanceDegrees,
+              4,
+              30,
+              'Action reach',
+            ),
       lookAheadSeconds: requireRange(autoCamera.lookAheadSeconds, 0, 3, 'Look ahead'),
       smoothingSeconds: requireRange(autoCamera.smoothingSeconds, 0.1, 3, 'Smooth time'),
       maxPanSpeedDegrees: requireRange(
@@ -106,6 +122,13 @@ export function parseGameViewerSettings(value: unknown): GameViewerSettings {
       ),
     },
   };
+}
+
+function parseRecordingMode(value: unknown): GameRecordingMode {
+  // Settings written before spatial recording existed intentionally adopt the new default.
+  if (value === undefined || value === 'video_assisted') return 'video_assisted';
+  if (value === 'forms') return 'forms';
+  throw new Error('Recording mode must be video-assisted or forms.');
 }
 
 /** Parse a JSON settings payload. */

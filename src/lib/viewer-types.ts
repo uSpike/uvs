@@ -1,6 +1,34 @@
 import type { MetadataTimeline } from './metadata';
 import type { GameViewerSettings } from './game-settings';
 
+/** A manual selection on a specific video frame, expressed in stable panorama coordinates. */
+export interface RecoViewerSpatialPoint {
+  timeMs: number;
+  frameIndex: number;
+  panoramaYaw: number;
+  panoramaPitch: number;
+  clientX: number;
+  clientY: number;
+}
+
+/** A draft spatial point rendered over the video while composing an event. */
+export interface RecoViewerSpatialMarker {
+  label: string;
+  point: RecoViewerSpatialPoint;
+}
+
+/** A saved event position that can briefly pulse during ordinary playback. */
+export interface RecoViewerPlaybackMarker {
+  id: string;
+  label: string;
+  detail: string;
+  tone: 'possession' | 'completion' | 'turnover' | 'goal' | 'defense' | 'neutral';
+  timeMs: number;
+  frameIndex: number;
+  panoramaYaw: number;
+  panoramaPitch: number;
+}
+
 /** Video and metadata selected by an application that embeds the viewer. */
 export interface RecoVideoViewerSource {
   /** Stable URL for the panorama video. The embedding application owns its lifetime. */

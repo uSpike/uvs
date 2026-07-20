@@ -3,6 +3,9 @@ export { default as RecoVideoViewer } from './RecoVideoViewer.svelte';
 export type {
   RecoVideoViewerSource,
   RecoViewerPlaybackState,
+  RecoViewerPlaybackMarker,
+  RecoViewerSpatialMarker,
+  RecoViewerSpatialPoint,
   RecoViewerStatus,
   RecoViewerViewState,
   GameViewerSettings,

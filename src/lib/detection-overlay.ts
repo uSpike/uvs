@@ -1,6 +1,6 @@
 import {
   detectionAreaStatus,
-  type AutoCameraPose,
+  type ActionRegionDetectionState,
   type DetectionAreaHistoryTimeline,
 } from './auto-camera';
 import {
@@ -19,6 +19,7 @@ import { canvasPixelRatio } from './render-resolution';
 
 const INCLUDED_DETECTION_COLOR = '#57d6ff';
 const PENDING_DETECTION_COLOR = '#ffb84d';
+const EXCLUDED_DETECTION_COLOR = '#8d958b';
 
 /**
  * Scale camera-normalized detection boxes with perspective zoom.
@@ -33,23 +34,13 @@ export function detectionBoxFovScale(fovDegrees: number): number {
   return referenceTangent / visibleTangent;
 }
 
-/** Drawing state for the visible panorama and the independent automatic camera. */
+/** Drawing state for the visible panorama or perspective camera. */
 export interface DetectionOverlayView {
   width: number;
   height: number;
   zoom: number;
   perspectiveMode: boolean;
   visibleCamera: PerspectiveCamera;
-  autoCamera: AutoCameraPose;
-  autoCameraAspect: number;
-}
-
-/** Return whether a detection center lies inside a perspective camera. */
-export function detectionIsInsideCameraFov(
-  detection: WebDetection,
-  camera: PerspectiveCamera,
-): boolean {
-  return Boolean(detection.panorama && projectPanoramaPoint(detection.panorama, camera));
 }
 
 /** Draw confidence boxes and automatic-camera acceptance state over a video frame. */
@@ -59,6 +50,7 @@ export function drawDetectionOverlay(
   metadata: MetadataTimeline | null,
   areaHistory: DetectionAreaHistoryTimeline | null,
   minimumAreaHistorySeconds: number,
+  actionStateByDetection: Map<WebDetection, ActionRegionDetectionState>,
   view: DetectionOverlayView,
 ): void {
   const { width, height } = view;
@@ -89,12 +81,6 @@ export function drawDetectionOverlay(
       : panoramaToNormalized(point, metadata.manifest.panorama_extent);
     return normalized ? { x: normalized.x * width, y: normalized.y * height } : null;
   };
-  const autoCamera: PerspectiveCamera = {
-    ...view.autoCamera,
-    aspect: view.autoCameraAspect,
-    tilt: view.visibleCamera.tilt,
-    roll: view.visibleCamera.roll,
-  };
   const overlays = detections.flatMap((detection) => {
     if (!detection.panorama) {
       return [];
@@ -103,19 +89,19 @@ export function drawDetectionOverlay(
     if (!position) {
       return [];
     }
-    const status = detectionAreaStatus(
+    const areaStatus = detectionAreaStatus(
       detection,
       areaHistory,
       minimumAreaHistorySeconds,
-      detectionIsInsideCameraFov(detection, autoCamera),
     );
-    return [{ detection, position, status }];
+    const actionState = actionStateByDetection.get(detection) ?? 'excluded';
+    return [{ detection, position, areaStatus, actionState }];
   });
   const boxFovScale = view.perspectiveMode
     ? detectionBoxFovScale(view.visibleCamera.fovDegrees)
     : 1;
 
-  for (const { detection, position, status } of overlays) {
+  for (const { detection, position, areaStatus, actionState } of overlays) {
     // Exported box sizes remain camera-normalized until projected corners join the sidecar.
     const boxWidth = Math.max(
       10 / view.zoom,
@@ -127,19 +113,33 @@ export function drawDetectionOverlay(
     );
     const left = position.x - boxWidth / 2;
     const top = position.y - boxHeight / 2;
-    const color = status.included ? INCLUDED_DETECTION_COLOR : PENDING_DETECTION_COLOR;
+    const color =
+      actionState === 'included'
+        ? INCLUDED_DETECTION_COLOR
+        : actionState === 'pending'
+          ? PENDING_DETECTION_COLOR
+          : EXCLUDED_DETECTION_COLOR;
 
     context.save();
     context.strokeStyle = color;
     context.lineWidth = 2 / view.zoom;
-    context.setLineDash(status.included ? [] : [6 / view.zoom, 4 / view.zoom]);
+    context.setLineDash(
+      actionState === 'included'
+        ? []
+        : actionState === 'pending'
+          ? [6 / view.zoom, 4 / view.zoom]
+          : [2 / view.zoom, 4 / view.zoom],
+    );
     context.strokeRect(left, top, boxWidth, boxHeight);
     context.restore();
 
     const confidence = `${Math.round(detection.confidence * 100)}%`;
-    const label = status.included
-      ? confidence
-      : `NEW  ${status.remainingSeconds.toFixed(1)}s  ${confidence}`;
+    const label =
+      actionState === 'included'
+        ? confidence
+        : actionState === 'pending'
+          ? `NEW  ${areaStatus.remainingSeconds.toFixed(1)}s  ${confidence}`
+          : `OUTSIDE ACTION  ${confidence}`;
     const fontSize = 12 / view.zoom;
     const labelPadding = 5 / view.zoom;
     context.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;

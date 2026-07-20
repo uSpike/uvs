@@ -19,7 +19,9 @@
     Users,
     X,
   } from '@lucide/svelte';
-  import { autoCameraEndzoneAtTime, calculatePointResults, calculatePointState, classifyMatchupRoles, latestPointTimeMs, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
+  import { autoCameraEndzoneAtTime, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
+  import type { GameRecordingMode } from './game-settings';
+  import type { RecoViewerSpatialMarker, RecoViewerSpatialPoint } from './viewer-types';
   import { gameEventIsIncomplete, gameEventLabel } from './game-events';
   import type { MatchupRole } from './matchup';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
@@ -39,6 +41,8 @@
     playPlayback,
     seekPlayback,
     stepPlaybackFrames,
+    recordingMode,
+    onSpatialStateChange,
     onHighlightOverlayChange,
     onEditingChange,
     onSnapshotChange,
@@ -52,6 +56,11 @@
     playPlayback: () => Promise<void>;
     seekPlayback: (seconds: number) => void;
     stepPlaybackFrames: (frameDelta: number) => void;
+    recordingMode: GameRecordingMode;
+    onSpatialStateChange: (state: {
+      placementActive: boolean;
+      markers: RecoViewerSpatialMarker[];
+    }) => void;
     onHighlightOverlayChange: (overlay: {
       description: string;
       position: number;
@@ -64,6 +73,12 @@
 
   type PanelTab = 'record' | 'paper' | 'players' | 'lines' | 'timeline' | 'highlights';
   type DraftMode = 'point' | 'event' | 'highlight' | null;
+  type SpatialDraftStage = 'inactive' | 'place_primary' | 'choose_action' | 'details';
+
+  interface SpatialDraftAnnotation extends Omit<EventSpatialAnnotation, 'id'> {
+    clientX: number;
+    clientY: number;
+  }
 
   interface ManualPointDraft {
     lineId: number;
@@ -108,6 +123,10 @@
   let resumeAfterDraft = false;
   let draftMode = $state<DraftMode>(null);
   let redoEvent = $state<TrackingEvent | null>(null);
+  let spatialDraft = $state(false);
+  let spatialDraftStage = $state<SpatialDraftStage>('inactive');
+  let spatialAnnotations = $state<SpatialDraftAnnotation[]>([]);
+  let spatialPopover = $state<{ left: number; top: number } | null>(null);
 
   let editingPointId = $state<number | null>(null);
   let pointLineId = $state(0);
@@ -160,6 +179,11 @@
   );
   const nextRecordedPoint = $derived(nextPointAfterTime(Math.round(playback.currentTime * 1000)));
   const pointResults = $derived(calculatePointResults(snapshot.data));
+  const displayedScore = $derived(
+    snapshot.data.game.hasVideo
+      ? calculateScoreAtTime(snapshot.data, Math.round(playback.currentTime * 1000))
+      : snapshot.statistics,
+  );
   const previousNavigationPoint = $derived(adjacentNavigationPoint(-1));
   const nextNavigationPoint = $derived(adjacentNavigationPoint(1));
 
@@ -291,6 +315,7 @@
     lockToken = '';
     lockError = message;
     draftMode = null;
+    clearSpatialDraft();
     presenceAbort?.abort();
     presenceAbort = null;
   }
@@ -301,6 +326,7 @@
     onEditingChange(false);
     lockToken = '';
     draftMode = null;
+    clearSpatialDraft();
     presenceAbort?.abort();
     presenceAbort = null;
     if (releasedToken) {
@@ -450,12 +476,188 @@
     editingEventId = null;
     editingHighlightId = null;
     mutationError = '';
+    clearSpatialDraft();
     if (resume && resumeAfterDraft) void playPlayback();
     resumeAfterDraft = false;
   }
 
   function currentSeconds(): number {
     return Math.max(0, getPlayback().currentTime);
+  }
+
+  function spatialRoleLabel(role: SpatialAnnotationRole): string {
+    switch (role) {
+      case 'handler': return 'Player with disc';
+      case 'thrower': return 'Thrower';
+      case 'receiver': return 'Receiver';
+      case 'intended_receiver': return 'Intended receiver';
+      case 'defender': return 'Defender';
+      case 'scorer': return 'Scorer';
+      case 'outgoing_player': return 'Player out';
+      case 'incoming_player': return 'Player in';
+    }
+  }
+
+  function emitSpatialState(placementActive = false): void {
+    onSpatialStateChange({
+      placementActive,
+      markers: spatialAnnotations.map((annotation) => ({
+        label: spatialDraftStage === 'choose_action'
+          ? 'Selected player'
+          : spatialRoleLabel(annotation.role),
+        point: {
+          timeMs: annotation.timeMs,
+          frameIndex: annotation.frameIndex,
+          panoramaYaw: annotation.panoramaYaw,
+          panoramaPitch: annotation.panoramaPitch,
+          clientX: annotation.clientX,
+          clientY: annotation.clientY,
+        },
+      })),
+    });
+  }
+
+  function clearSpatialDraft(): void {
+    spatialDraft = false;
+    spatialDraftStage = 'inactive';
+    spatialAnnotations = [];
+    spatialPopover = null;
+    onSpatialStateChange({ placementActive: false, markers: [] });
+  }
+
+  function beginSpatialPlacement(): void {
+    if (
+      recordingMode !== 'video_assisted' ||
+      !editing ||
+      !currentPoint ||
+      !snapshot.currentPointState ||
+      snapshot.currentPointState.ended ||
+      snapshot.currentPointState.openStoppageEventId !== null
+    ) return;
+
+    if (spatialDraft) return;
+
+    if (draftMode !== null) return;
+    pauseForDraft();
+    activeTab = 'record';
+    draftMode = 'event';
+    spatialDraft = true;
+    spatialDraftStage = 'place_primary';
+    spatialAnnotations = [];
+    spatialPopover = null;
+    emitSpatialState(true);
+  }
+
+  /** Accept a manual panorama point placed by the video viewer. */
+  export function placeSpatialPoint(point: RecoViewerSpatialPoint): void {
+    if (!spatialDraft || spatialDraftStage !== 'place_primary') return;
+    spatialAnnotations = [...spatialAnnotations, {
+      role: 'handler',
+      playerId: null,
+      timeMs: point.timeMs,
+      frameIndex: point.frameIndex,
+      panoramaYaw: point.panoramaYaw,
+      panoramaPitch: point.panoramaPitch,
+      clientX: point.clientX,
+      clientY: point.clientY,
+    }];
+    eventTimeSeconds = point.timeMs / 1000;
+    spatialDraftStage = 'choose_action';
+    spatialPopover = spatialPopoverPosition(point);
+    emitSpatialState(false);
+  }
+
+  /** Move a draft manual marker without changing its selected frame or time. */
+  export function adjustSpatialPoint(index: number, point: RecoViewerSpatialPoint): void {
+    const existing = spatialAnnotations[index];
+    if (!existing) return;
+    spatialAnnotations = spatialAnnotations.map((annotation, annotationIndex) =>
+      annotationIndex === index
+        ? {
+            ...annotation,
+            panoramaYaw: point.panoramaYaw,
+            panoramaPitch: point.panoramaPitch,
+            clientX: point.clientX,
+            clientY: point.clientY,
+          }
+        : annotation,
+    );
+    if (index === spatialAnnotations.length - 1) spatialPopover = spatialPopoverPosition(point);
+    emitSpatialState(false);
+  }
+
+  function spatialPopoverPosition(point: Pick<RecoViewerSpatialPoint, 'clientX' | 'clientY'>): { left: number; top: number } {
+    return {
+      left: Math.max(12, Math.min(window.innerWidth - 332, point.clientX + 14)),
+      top: Math.max(12, Math.min(window.innerHeight - 430, point.clientY + 14)),
+    };
+  }
+
+  function chooseSpatialAction(type: 'possession_start' | 'completion' | 'turnover' | 'defended' | 'goal'): void {
+    if (!currentPoint || spatialAnnotations.length !== 1) return;
+    eventPointId = currentPoint.id;
+    eventType = type;
+    resetEventFields(type);
+    const state = snapshot.currentPointState;
+    const callahanGoal = type === 'goal' && state?.possession === 'defense';
+    callahan = callahanGoal;
+
+    let role: SpatialAnnotationRole;
+    if (type === 'possession_start') role = 'handler';
+    else if (type === 'completion') role = 'receiver';
+    else if (type === 'turnover') role = 'intended_receiver';
+    else if (type === 'defended') role = 'defender';
+    else role = 'scorer';
+
+    const clicked = { ...spatialAnnotations[0], role, playerId: null };
+    const carriedThrower =
+      (type === 'completion' || type === 'turnover' || (type === 'goal' && !callahanGoal)) &&
+      state?.handlerPlayerId !== null &&
+      state?.handlerPlayerId !== undefined
+        ? carriedHandlerSpatialAnnotation(state.handlerPlayerId)
+        : null;
+    spatialAnnotations = carriedThrower
+      ? [{ ...carriedThrower, role: 'thrower' }, clicked]
+      : [clicked];
+    spatialDraftStage = 'details';
+    emitSpatialState(false);
+  }
+
+  function carriedHandlerSpatialAnnotation(playerId: number): SpatialDraftAnnotation | null {
+    if (!currentPoint) return null;
+    const annotation = latestHandlerSpatialAnnotation(currentPoint, playerId);
+    return annotation
+      ? {
+          role: 'thrower',
+          playerId,
+          timeMs: annotation.timeMs,
+          frameIndex: annotation.frameIndex,
+          panoramaYaw: annotation.panoramaYaw,
+          panoramaPitch: annotation.panoramaPitch,
+          clientX: 0,
+          clientY: 0,
+        }
+      : null;
+  }
+
+  async function selectSpatialClickedPlayer(playerId: number): Promise<void> {
+    if (saving) return;
+    if (eventType === 'completion' || eventType === 'turnover' || eventType === 'goal') {
+      secondPlayerId = playerId.toString();
+    } else {
+      firstPlayerId = playerId.toString();
+    }
+    spatialAnnotations = spatialAnnotations.map((annotation, index) => index === spatialAnnotations.length - 1
+      ? { ...annotation, playerId }
+      : annotation);
+    emitSpatialState(false);
+    await saveEvent();
+  }
+
+  function spatialClickedPlayerId(): string {
+    return eventType === 'completion' || eventType === 'turnover' || eventType === 'goal'
+      ? secondPlayerId
+      : firstPlayerId;
   }
 
   function pointScrubberAtTime(timeMs: number): PointScrubberRange | null {
@@ -807,6 +1009,8 @@
         return firstPlayerId !== '' && secondPlayerId !== '';
       case 'turnover':
         return firstPlayerId !== '';
+      case 'defended':
+        return firstPlayerId !== '';
       case 'goal':
         return secondPlayerId !== '' && (callahan || firstPlayerId !== '');
       default:
@@ -966,7 +1170,10 @@
   }
 
   async function saveEvent(): Promise<void> {
-    eventTimeSeconds = currentSeconds();
+    const positionedAnnotation = spatialDraft ? spatialAnnotations.at(-1) : null;
+    eventTimeSeconds = positionedAnnotation
+      ? positionedAnnotation.timeMs / 1000
+      : currentSeconds();
     const result = await mutate({
       operation: editingEventId === null ? 'addEvent' : 'updateEvent',
       eventId: editingEventId,
@@ -974,6 +1181,16 @@
       timeMs: Math.round(eventTimeSeconds * 1000),
       type: eventType,
       payload: eventPayload(),
+      ...(spatialDraft ? {
+        annotations: spatialAnnotations.map((annotation) => ({
+          role: annotation.role,
+          playerId: annotation.playerId,
+          timeMs: annotation.timeMs,
+          frameIndex: annotation.frameIndex,
+          panoramaYaw: annotation.panoramaYaw,
+          panoramaPitch: annotation.panoramaPitch,
+        })),
+      } : {}),
     });
     if (!result) return;
     closeDraft();
@@ -1049,6 +1266,7 @@
       timeMs: event.timeMs,
       type: event.type,
       payload: event.payload,
+      annotations: event.annotations.map(({ id: _id, ...annotation }) => annotation),
     }, true);
     if (result) redoEvent = null;
   }
@@ -1183,29 +1401,52 @@
   }
 
   function handleShortcut(event: KeyboardEvent): void {
-    if (!editing || draftMode !== null || event.repeat) return;
+    if (!editing || event.repeat) return;
     const target = event.target as HTMLElement | null;
-    if (target?.matches('input, select, textarea, button') || target?.isContentEditable) return;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+    if (target?.matches('input, select, textarea') || target?.isContentEditable) return;
+    const key = event.key.toLowerCase();
+    if (key === 'escape' && spatialDraft) {
+      event.preventDefault();
+      closeDraft();
+      return;
+    }
+    if (
+      key === 's' &&
+      recordingMode === 'video_assisted' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      beginSpatialPlacement();
+      return;
+    }
+    if (target?.matches('button')) return;
+    if (draftMode !== null) return;
+    if ((event.ctrlKey || event.metaKey) && key === 'z') {
       event.preventDefault();
       if (event.shiftKey) void redoLastTimelineEvent();
       else void undoLastTimelineEntry();
       return;
     }
     if (!currentPoint || !snapshot.currentPointState || snapshot.currentPointState.ended) return;
-    const key = event.key.toLowerCase();
     if (snapshot.currentPointState.openStoppageEventId !== null && key !== 'f') return;
     const possession = snapshot.currentPointState.possession;
-    const shortcuts: Record<string, GameEventType | undefined> = {
-      p: possession === 'offense' ? 'possession_start' : undefined,
-      c: possession === 'offense' ? 'completion' : undefined,
-      t: possession === 'offense' ? 'turnover' : 'opponent_turnover',
-      d: possession === 'defense' ? 'defended' : undefined,
-      g: 'goal',
-      x: possession === 'defense' ? 'conceded' : undefined,
-      s: 'substitution',
-      f: 'stoppage',
-    };
+    const shortcuts: Record<string, GameEventType | undefined> = recordingMode === 'forms'
+      ? {
+          p: possession === 'offense' ? 'possession_start' : undefined,
+          c: possession === 'offense' ? 'completion' : undefined,
+          t: possession === 'offense' ? 'turnover' : 'opponent_turnover',
+          g: 'goal',
+          x: possession === 'defense' ? 'conceded' : undefined,
+          s: 'substitution',
+          f: 'stoppage',
+        }
+      : {
+          t: possession === 'defense' ? 'opponent_turnover' : undefined,
+          x: possession === 'defense' ? 'conceded' : undefined,
+          f: 'stoppage',
+        };
     const type = shortcuts[key];
     if (type) {
       event.preventDefault();
@@ -1225,12 +1466,12 @@
   <header class="score-header">
     <div class="score-team">
       <span>{snapshot.data.game.teamName}</span>
-      <strong>{snapshot.statistics.ourScore}</strong>
+      <strong>{displayedScore.ourScore}</strong>
     </div>
     <span class="score-separator">–</span>
     <div class="score-team opponent">
       <span>{snapshot.data.game.opponentName}</span>
-      <strong>{snapshot.statistics.opponentScore}</strong>
+      <strong>{displayedScore.opponentScore}</strong>
     </div>
   </header>
 
@@ -1270,28 +1511,6 @@
   {/if}
 
   <div class="panel-content">
-    {#if activeTab === 'record' && pointScrubber}
-      {@const scrubberValueMs = Math.min(
-        pointScrubber.endTimeMs,
-        Math.max(pointScrubber.startTimeMs, Math.round(playback.currentTime * 1000)),
-      )}
-      <section class="point-scrubber" aria-label={`Point ${pointScrubber.point.sequenceNumber} video position`}>
-        <header>
-          <strong>Point {pointScrubber.point.sequenceNumber}</strong>
-          <span>{formatTime(scrubberValueMs - pointScrubber.startTimeMs)} / {formatTime(pointScrubber.endTimeMs - pointScrubber.startTimeMs)}</span>
-        </header>
-        <input
-          type="range"
-          min={pointScrubber.startTimeMs}
-          max={Math.max(pointScrubber.startTimeMs + 1, pointScrubber.endTimeMs)}
-          step="10"
-          value={scrubberValueMs}
-          aria-label={`Seek within point ${pointScrubber.point.sequenceNumber}`}
-          oninput={scrubPoint}
-        />
-        <div><span>Pull</span><span>{pointScrubber.completed ? 'Score' : 'Recorded through'}</span></div>
-      </section>
-    {/if}
     {#if draftMode === 'point'}
       <form class="entry-form" onsubmit={(event) => { event.preventDefault(); void savePoint(); }}>
         <header><h2>{editingPointId === null ? 'Choose the next lineup' : 'Edit point'}</h2><button type="button" onclick={() => closeDraft()}><X size={17} /></button></header>
@@ -1380,7 +1599,7 @@
         {/if}
         <footer><button class="cancel" type="button" onclick={() => closeDraft()}>Cancel</button><button class="save" type="submit" disabled={saving || pointPlayerIds.length === 0}><Save size={14} />{saving ? 'Saving…' : editingPointId === null ? 'Mark pull now' : 'Save point'}</button></footer>
       </form>
-    {:else if draftMode === 'event'}
+    {:else if draftMode === 'event' && !spatialDraft}
       {@const timelineContext = eventTimelineContext()}
       <form class="entry-form" onsubmit={(event) => { event.preventDefault(); void saveEvent(); }}>
         <header><h2>{editingEventId === null ? gameEventLabel(eventType) : `Edit ${gameEventLabel(eventType).toLowerCase()}`}</h2><button type="button" onclick={() => closeDraft()}><X size={17} /></button></header>
@@ -1457,10 +1676,9 @@
             </div>
           </fieldset>
         {:else if eventType === 'defended'}
-          <fieldset class="quick-player-picker">
-            <legend>Defender <small>optional</small></legend>
+          <fieldset class="quick-player-picker required-picker">
+            <legend>Defender</legend>
             <div>
-              <button class:selected={firstPlayerId === ''} type="button" aria-pressed={firstPlayerId === ''} onclick={() => firstPlayerId = ''}>Unknown</button>
               {#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}
                 <button class:selected={firstPlayerId === player.id.toString()} type="button" aria-pressed={firstPlayerId === player.id.toString()} title={player.name} onclick={() => firstPlayerId = player.id.toString()}>{player.name}</button>
               {/each}
@@ -1547,17 +1765,14 @@
         {#if editing}
           <div class="recorder-toolbar">
             <span><span class="live-dot"></span>Exclusive editor</span>
+            {#if recordingMode === 'video_assisted'}
+              <small><kbd>S</kbd> mark player on video</small>
+            {/if}
           </div>
         {/if}
 
         {#if snapshot.data.points.length > 0}
-          {#if editing}
-            <nav class="point-step-navigation" aria-label="Point navigation">
-              <button type="button" disabled={!previousNavigationPoint} onclick={() => { if (previousNavigationPoint) seekToPoint(previousNavigationPoint); }}><ChevronLeft size={14} />Previous point</button>
-              <span>{recordPoint ? `Point ${recordPoint.sequenceNumber}` : 'Between points'}</span>
-              <button type="button" disabled={!nextNavigationPoint} onclick={() => { if (nextNavigationPoint) seekToPoint(nextNavigationPoint); }}>Next point<ChevronRight size={14} /></button>
-            </nav>
-          {:else}
+          {#if !editing}
             <div class="point-results-table-wrap">
               <table class="point-results-table">
                 <thead>
@@ -1643,23 +1858,32 @@
           {/if}
 
           {#if editing && currentPoint?.id === recordPoint.id && !recordPointState.ended}
-            <div class:four-actions={recordPointState.possession === 'defense' || recordPointState.handlerPlayerId === null} class="action-groups">
-              {#if recordPointState.possession === 'offense'}
-                {#if recordPointState.handlerPlayerId === null}
-                  <button class="main-action possession" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('possession_start')}><span>P</span>Start possession</button>
-                {/if}
-                <button class="main-action completion" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('completion')}><span>C</span>Completion</button>
-                <button class="main-action turnover" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('turnover')}><span>T</span>Turnover</button>
-                <button class="main-action goal" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('goal')}><span>G</span>Goal</button>
-              {:else}
-                <button class="main-action defended" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('defended')}><span>D</span>Defended</button>
-                <button class="main-action turnover" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('opponent_turnover')}><span>T</span>Opponent turnover</button>
-                <button class="main-action goal" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={openCallahan}><span>G</span>Callahan</button>
-                <button class="main-action conceded" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('conceded')}><span>X</span>Conceded</button>
+            {#if recordingMode === 'video_assisted'}
+              {#if recordPointState.possession === 'defense'}
+                <div class="non-player-actions">
+                  <button type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('opponent_turnover')}>Opponent turnover</button>
+                  <button type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('conceded')}>Conceded</button>
+                </div>
               {/if}
-            </div>
+            {:else}
+              <div class:four-actions={recordPointState.possession === 'defense' || recordPointState.handlerPlayerId === null} class="action-groups">
+                {#if recordPointState.possession === 'offense'}
+                  {#if recordPointState.handlerPlayerId === null}
+                    <button class="main-action possession" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('possession_start')}><span>P</span>Start possession</button>
+                  {/if}
+                  <button class="main-action completion" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('completion')}><span>C</span>Completion</button>
+                  <button class="main-action turnover" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('turnover')}><span>T</span>Turnover</button>
+                  <button class="main-action goal" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('goal')}><span>G</span>Goal</button>
+                {:else}
+                  <button class="main-action defended" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('defended')}><span>D</span>Defended</button>
+                  <button class="main-action turnover" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('opponent_turnover')}><span>T</span>Opponent turnover</button>
+                  <button class="main-action goal" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={openCallahan}><span>G</span>Callahan</button>
+                  <button class="main-action conceded" type="button" disabled={recordPointState.openStoppageEventId !== null} onclick={() => openNewEvent('conceded')}><span>X</span>Conceded</button>
+                {/if}
+              </div>
+            {/if}
             <div class="secondary-actions">
-              <button type="button" onclick={() => openNewEvent('substitution')}><Users size={14} /><span>Substitute</span><kbd>S</kbd></button>
+              <button type="button" onclick={() => openNewEvent('substitution')}><Users size={14} /><span>Substitute</span>{#if recordingMode === 'forms'}<kbd>S</kbd>{/if}</button>
               {#if recordPointState.openStoppageEventId !== null}
                 <button class="resume" type="button" onclick={() => void closeOpenStoppage()}><Play size={14} /><span>Resume play</span><kbd>F</kbd></button>
               {:else}
@@ -1890,10 +2114,107 @@
       </section>
     {/if}
   </div>
+
+  {#if activeTab === 'record' && (pointScrubber || (editing && draftMode === null && snapshot.data.points.length > 0))}
+    <footer class="point-playback-controls">
+      {#if editing && draftMode === null && snapshot.data.points.length > 0}
+        <nav class="point-step-navigation" aria-label="Point navigation">
+          <button type="button" disabled={!previousNavigationPoint} onclick={() => { if (previousNavigationPoint) seekToPoint(previousNavigationPoint); }}><ChevronLeft size={14} />Previous point</button>
+          <span>{recordPoint ? `Point ${recordPoint.sequenceNumber}` : 'Between points'}</span>
+          <button type="button" disabled={!nextNavigationPoint} onclick={() => { if (nextNavigationPoint) seekToPoint(nextNavigationPoint); }}>Next point<ChevronRight size={14} /></button>
+        </nav>
+      {/if}
+      {#if pointScrubber}
+        {@const scrubberValueMs = Math.min(
+          pointScrubber.endTimeMs,
+          Math.max(pointScrubber.startTimeMs, Math.round(playback.currentTime * 1000)),
+        )}
+        <section class="point-scrubber" aria-label={`Point ${pointScrubber.point.sequenceNumber} video position`}>
+          <header>
+            <strong>Point {pointScrubber.point.sequenceNumber}</strong>
+            <span>{formatTime(scrubberValueMs - pointScrubber.startTimeMs)} / {formatTime(pointScrubber.endTimeMs - pointScrubber.startTimeMs)}</span>
+          </header>
+          <input
+            type="range"
+            min={pointScrubber.startTimeMs}
+            max={Math.max(pointScrubber.startTimeMs + 1, pointScrubber.endTimeMs)}
+            step="10"
+            value={scrubberValueMs}
+            aria-label={`Seek within point ${pointScrubber.point.sequenceNumber}`}
+            oninput={scrubPoint}
+          />
+          <div><span>Pull</span><span>{pointScrubber.completed ? 'Score' : 'Recorded through'}</span></div>
+        </section>
+      {/if}
+    </footer>
+  {/if}
 </aside>
 
+{#if spatialDraft && spatialPopover}
+  <section
+    class="spatial-event-popover"
+    style:left={`${spatialPopover.left}px`}
+    style:top={`${spatialPopover.top}px`}
+    aria-label="Spatial event details"
+  >
+    <header>
+      <div>
+        <small>Video-assisted recording</small>
+        <strong>{spatialDraftStage === 'choose_action' ? 'What happened here?' : gameEventLabel(eventType)}</strong>
+      </div>
+      <button type="button" aria-label="Cancel spatial event" title="Cancel" onclick={() => closeDraft()}><X size={15} /></button>
+    </header>
+
+    {#if spatialDraftStage === 'choose_action'}
+      <div class="spatial-action-menu">
+        {#if snapshot.currentPointState?.possession === 'offense'}
+          {#if snapshot.currentPointState.handlerPlayerId === null}
+            <button type="button" onclick={() => chooseSpatialAction('possession_start')}>Start possession</button>
+          {:else}
+            <button type="button" onclick={() => chooseSpatialAction('completion')}>Completion</button>
+            <button type="button" onclick={() => chooseSpatialAction('turnover')}>Turnover</button>
+            <button type="button" onclick={() => chooseSpatialAction('goal')}>Goal</button>
+          {/if}
+        {:else}
+          <button type="button" onclick={() => chooseSpatialAction('defended')}>Defended</button>
+          <button type="button" onclick={() => chooseSpatialAction('goal')}>Callahan</button>
+        {/if}
+      </div>
+      <p>The marker is manual. Drag it on the video if the position needs adjustment.</p>
+    {:else if spatialDraftStage === 'details'}
+      {#if eventType === 'turnover'}
+        <label class="spatial-field"><span>Reason</span><select bind:value={turnoverReason} disabled={saving}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="unknown">Unknown</option></select></label>
+      {/if}
+
+      <fieldset class="spatial-player-picker">
+        <legend>{spatialRoleLabel(spatialAnnotations[spatialAnnotations.length - 1].role)}</legend>
+        <div>
+          {#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}
+            <button
+              class:selected={spatialClickedPlayerId() === player.id.toString()}
+              type="button"
+              title={player.name}
+              disabled={saving}
+              onclick={() => void selectSpatialClickedPlayer(player.id)}
+            >{player.name}</button>
+          {/each}
+        </div>
+      </fieldset>
+
+      {#if mutationError}<p class="spatial-error" role="alert">{mutationError}</p>{/if}
+      {#if saving}<p class="spatial-saving" role="status">Saving event…</p>{/if}
+
+      {#if eventType === 'turnover' && !secondPlayerId}
+        <footer>
+          <button class="save" type="button" disabled={saving || !firstPlayerId} onclick={() => void saveEvent()}>{saving ? 'Saving…' : 'Receiver unknown'}</button>
+        </footer>
+      {/if}
+    {/if}
+  </section>
+{/if}
+
 <style>
-  .stats-panel { display:grid; grid-template-rows:auto auto auto minmax(0,1fr); width:100%; height:100%; min-width:0; min-height:0; color:#e9eee7; background:#181b17; border-left:1px solid #353934; }
+  .stats-panel { display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; color:#e9eee7; background:#181b17; border-left:1px solid #353934; }
   button, select, input { font:inherit; }
   button { cursor:pointer; }
   .score-header { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:7px; min-height:66px; padding:9px 14px; border-bottom:1px solid #353934; background:linear-gradient(180deg,#242721 0%,#1e211d 100%); }
@@ -1913,8 +2234,9 @@
   .panel-tabs button { flex:1; min-height:36px; padding:0 3px; border:0; border-bottom:2px solid transparent; color:#979e94; background:transparent; font-size:10px; font-weight:680; }
   .panel-tabs button.active { border-bottom-color:#e3ae27; color:#fff; }
   .panel-tabs button:disabled { cursor:not-allowed; opacity:.35; }
-  .panel-content { min-height:0; overflow:auto; }
-  .point-scrubber { display:grid; gap:5px; padding:8px 12px 7px; border-bottom:1px solid #384039; background:#1d241f; }
+  .panel-content { flex:1 1 auto; min-height:0; overflow:auto; }
+  .point-playback-controls { flex:0 0 auto; border-top:1px solid #465047; background:#1b201c; box-shadow:0 -5px 16px rgba(0,0,0,.22); }
+  .point-scrubber { display:grid; gap:5px; padding:8px 12px 7px; background:#1d241f; }
   .point-scrubber header,.point-scrubber > div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .point-scrubber header strong { color:#dce5dc; font-size:10px; }
   .point-scrubber header span { color:#aab7aa; font:9px ui-monospace,monospace; font-variant-numeric:tabular-nums; }
@@ -1923,6 +2245,7 @@
   .record-view,.timeline-view,.table-view { min-height:100%; }
   .recorder-toolbar { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; border-bottom:1px solid #30342e; color:#9fa69c; font-size:10px; }
   .recorder-toolbar span { display:flex; align-items:center; gap:5px; }
+  .recorder-toolbar small { display:flex; align-items:center; gap:5px; color:#7f887e; font-size:8px; }
   .redo-icon { transform:scaleX(-1); }
   .live-dot { width:6px; height:6px; border-radius:50%; background:#54d683; }
   .point-step-navigation { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:7px; padding:7px 10px; border-bottom:1px solid #343a34; background:#1d201c; }
@@ -1984,6 +2307,9 @@
   .main-action.goal { border-color:#9a771f; background:#3b321e; }
   .main-action.turnover,.main-action.conceded { border-color:#74464b; background:#392629; }
   .main-action:disabled { cursor:not-allowed; opacity:.38; }
+  .non-player-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding:0 12px 10px; }
+  .non-player-actions button { min-height:33px; border:1px solid #62464a; border-radius:4px; color:#dfc7c9; background:#302426; font-size:9px; font-weight:680; }
+  .non-player-actions button:disabled { cursor:not-allowed; opacity:.4; }
   .secondary-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; margin:0 12px 12px; border:1px solid #3b4039; }
   .secondary-actions button { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:5px; min-height:36px; padding:0 7px; border:0; border-left:1px solid #3b4039; color:#c4cac1; background:#222520; font-size:9px; text-align:left; }
   .secondary-actions button:first-child { border-left:0; }
@@ -2160,6 +2486,29 @@
   .highlight-view header button:disabled { cursor:not-allowed; opacity:.4; }
   .highlight-header-actions { display:flex; align-items:center; gap:5px; }
   .highlight-view header button.stop-playlist { border-color:#8a4b50; background:#6d3439; }
+  .spatial-event-popover { position:fixed; z-index:100; display:grid; gap:10px; width:320px; max-height:min(420px,calc(100vh - 24px)); padding:11px; overflow:auto; border:1px solid #5b6b68; border-radius:6px; color:#edf3ee; background:#1c211e; box-shadow:0 12px 34px rgba(0,0,0,.55); }
+  .spatial-event-popover > header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:8px; border-bottom:1px solid #363d38; }
+  .spatial-event-popover > header > div { display:grid; gap:2px; }
+  .spatial-event-popover > header small { color:#6fc5d5; font-size:8px; font-weight:750; text-transform:uppercase; }
+  .spatial-event-popover > header strong { font-size:13px; }
+  .spatial-event-popover > header button { display:grid; place-items:center; width:26px; height:26px; padding:0; border:0; color:#aab3aa; background:transparent; }
+  .spatial-event-popover > p { margin:0; color:#929b92; font-size:9px; line-height:1.45; }
+  .spatial-action-menu { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+  .spatial-action-menu button { min-height:38px; padding:5px; border:1px solid #3d7255; border-radius:4px; color:#ddf2e3; background:#23382a; font-size:10px; font-weight:720; }
+  .spatial-action-menu button:nth-child(3n) { border-color:#765054; color:#f2d9db; background:#382729; }
+  .spatial-player-picker { min-width:0; margin:0; padding:0; border:0; }
+  .spatial-player-picker legend,.spatial-field > span { margin-bottom:5px; color:#adb6ad; font-size:9px; font-weight:720; }
+  .spatial-player-picker > div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; max-height:126px; overflow:auto; }
+  .spatial-player-picker button { min-width:0; min-height:30px; padding:4px; overflow:hidden; border:1px solid #414941; border-radius:3px; color:#b7c0b7; background:#282e29; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+  .spatial-player-picker button.selected { border-color:#32916a; color:#e0f5e6; background:#21402f; box-shadow:inset 0 0 0 1px #32916a; }
+  .spatial-field { display:grid; gap:4px; }
+  .spatial-field select { min-height:32px; padding:4px 6px; border:1px solid #485149; border-radius:3px; color:#edf2ed; background:#282e29; }
+  .spatial-event-popover footer { display:flex; justify-content:flex-end; gap:5px; padding-top:7px; border-top:1px solid #363d38; }
+  .spatial-event-popover footer button { min-height:31px; padding:0 8px; border:1px solid #495149; border-radius:3px; color:#c6cec6; background:#292f2a; font-size:9px; font-weight:700; }
+  .spatial-event-popover footer button.save { border-color:#087f9b; color:#fff; background:#087f9b; }
+  .spatial-event-popover footer button:disabled { cursor:not-allowed; opacity:.42; }
+  .spatial-error { margin:0; color:#ffb0b5; font-size:9px; }
+  .spatial-saving { margin:0; color:#8ed7e4; font-size:9px; }
   .highlight-empty { display:grid; place-items:center; gap:5px; padding:40px 20px; color:#858d82; text-align:center; }
   .highlight-empty strong { color:#dce2d9; font-size:12px; }
   .highlight-empty span { font-size:9px; }

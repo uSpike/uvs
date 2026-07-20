@@ -21,7 +21,9 @@ interface SubmittedValues {
   rigTiltDegrees: string;
   rigRollDegrees: string;
   fovDegrees: string;
+  recordingMode: string;
   newAreaDelaySeconds: string;
+  actionJoinDistanceDegrees: string;
   lookAheadSeconds: string;
   smoothingSeconds: string;
   maxPanSpeedDegrees: string;
@@ -79,10 +81,15 @@ export const actions: Actions = {
         rigRollRadians:
           requiredNumber(values.rigRollDegrees, 'Roll') * RADIANS_PER_DEGREE,
         fovDegrees: requiredNumber(values.fovDegrees, 'Field of view'),
+        recordingMode: values.recordingMode,
         autoCamera: {
           newAreaDelaySeconds: requiredNumber(
             values.newAreaDelaySeconds,
             'New area delay',
+          ),
+          actionJoinDistanceDegrees: requiredNumber(
+            values.actionJoinDistanceDegrees,
+            'Action reach',
           ),
           lookAheadSeconds: requiredNumber(values.lookAheadSeconds, 'Look ahead'),
           smoothingSeconds: requiredNumber(values.smoothingSeconds, 'Smooth time'),
@@ -165,7 +172,9 @@ function submittedValues(form: FormData): SubmittedValues {
     rigTiltDegrees: String(form.get('rigTiltDegrees') ?? ''),
     rigRollDegrees: String(form.get('rigRollDegrees') ?? ''),
     fovDegrees: String(form.get('fovDegrees') ?? ''),
+    recordingMode: String(form.get('recordingMode') ?? ''),
     newAreaDelaySeconds: String(form.get('newAreaDelaySeconds') ?? ''),
+    actionJoinDistanceDegrees: String(form.get('actionJoinDistanceDegrees') ?? ''),
     lookAheadSeconds: String(form.get('lookAheadSeconds') ?? ''),
     smoothingSeconds: String(form.get('smoothingSeconds') ?? ''),
     maxPanSpeedDegrees: String(form.get('maxPanSpeedDegrees') ?? ''),

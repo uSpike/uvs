@@ -279,6 +279,30 @@
 
       <div class="parameter-groups">
         <fieldset>
+          <legend>Statistics recording</legend>
+          <div class="recording-mode-options">
+            <label>
+              <input
+                type="radio"
+                name="recordingMode"
+                value="video_assisted"
+                checked={(submittedValues?.recordingMode ?? data.game.settings.recordingMode) === 'video_assisted'}
+              />
+              <span><strong>Video-assisted</strong><small>Press S, then mark players directly on the video.</small></span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="recordingMode"
+                value="forms"
+                checked={(submittedValues?.recordingMode ?? data.game.settings.recordingMode) === 'forms'}
+              />
+              <span><strong>Forms</strong><small>Use the existing action forms without marking video positions.</small></span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
           <legend>Framing</legend>
           <div class="parameter-grid framing-grid">
             <label for="rig-tilt">
@@ -349,6 +373,22 @@
                   required
                 />
                 <span>sec</span>
+              </span>
+            </label>
+            <label for="action-reach">
+              <span class="field-label">Action reach</span>
+              <span class="number-field">
+                <input
+                  id="action-reach"
+                  name="actionJoinDistanceDegrees"
+                  type="number"
+                  min="4"
+                  max="30"
+                  step="1"
+                  value={submittedValues?.actionJoinDistanceDegrees ?? data.game.settings.autoCamera.actionJoinDistanceDegrees}
+                  required
+                />
+                <span>deg</span>
               </span>
             </label>
             <label for="look-ahead">
@@ -552,6 +592,42 @@
 
   .editor-section + .editor-section {
     border-top: 1px solid #d9ded6;
+  }
+
+  .recording-mode-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .recording-mode-options label {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 11px;
+    border: 1px solid #cfd5cc;
+    border-radius: 5px;
+    background: #f8faf7;
+  }
+
+  .recording-mode-options input {
+    margin-top: 2px;
+  }
+
+  .recording-mode-options span {
+    display: grid;
+    gap: 3px;
+  }
+
+  .recording-mode-options strong {
+    color: #252b25;
+    font-size: 12px;
+  }
+
+  .recording-mode-options small {
+    color: #687066;
+    font-size: 10px;
+    line-height: 1.4;
   }
 
   .metadata-heading {

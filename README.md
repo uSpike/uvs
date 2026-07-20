@@ -81,9 +81,15 @@ signed-in player may explicitly take over, immediately invalidating the former
 editor's mutation token. Every edit, delete, and timecode change recalculates
 the game from its authoritative timeline.
 
-Desktop shortcuts while edit mode is active are `C` completion, `T` turnover,
-`D` defended, `G` goal or Callahan, `X` conceded, `S` substitution, `F`
-stoppage/resume, and `Ctrl/Cmd+Z` to undo the most recently added entry.
+Video-assisted recording is the default game mode. Press `S` to pause and arm
+one manual panorama-space player selection; ordinary video clicks continue to
+pan the camera at all other times. A possession or reception establishes the
+fixed thrower position, so the next completion marks only its receiver. Form
+mode retains the existing shortcuts: `C` completion, `T`
+turnover, `D` defended, `G` goal or Callahan, `X` conceded, `S` substitution,
+`F` stoppage/resume, and `Ctrl/Cmd+Z` to undo the most recently added entry.
+Saved spatial actions can be flashed during playback with **Action markers**
+in the viewer options menu; carried thrower positions are deduplicated.
 
 ## Viewer
 
@@ -101,22 +107,34 @@ WebGL 2.
 Enable **Auto camera** to frame the active players automatically. The viewer
 maintains a virtual camera continuously, even while automatic mode is disabled.
 Enabling the mode snaps the visible camera to that already-calculated pose.
-Current detections and actual samples inside the configured **Look ahead**
-window drive the virtual camera without relying on track IDs. Detection centers
-inside its FOV are included immediately. **New area delay** applies only to
-newly occupied regions outside the virtual view, including at the start of the
-video; gaps reset their new-area history. Manual panning and zooming do not
-change that calculation.
+Current detections and samples inside the configured **Look ahead** window drive
+the virtual camera without relying on track IDs or a fixed player count. The
+camera follows the spatially connected detection region nearest its current
+pose. **Action reach** controls the maximum gap that connects detections into
+that region. At every recorded pull, all mapped detections on both sides of the
+field become a trusted baseline. That trust follows occupied regions with a
+bounded motion allowance for fast players and sparse detection samples, without
+using exported track IDs. **New area delay** still applies to regions first
+occupied after the pull, and persistence alone never admits a remote region.
+Gaps reset new-area history. Manual panning and zooming do not change the
+virtual camera calculation.
 
-Included detection boxes are solid cyan. Newly occupied boxes outside the auto
-FOV are dashed amber where visible until their displayed delay expires. Labels
-show confidence without class names or motion arrows. Smooth time, maximum
-camera speed, and minimum FOV control the camera response. **Frame padding**
-controls the extra edge space around accepted detection boxes: lower values
-produce a tighter crop, while **Minimum FOV** remains the zoom-in limit.
-**Pan accel** and **Zoom accel** limit how quickly camera velocity can change,
-avoiding abrupt reframing. Dragging or manually changing FOV exits automatic
-mode.
+Included detection boxes are solid cyan. New disconnected boxes are dashed
+amber until their displayed delay expires, while persistent detections outside
+the action region are dotted gray. Labels show confidence without class names
+or motion arrows. Smooth time, maximum camera speed, and minimum FOV control the
+camera response. **Frame padding** controls the extra edge space around accepted
+detection boxes: lower values produce a tighter crop, while **Minimum FOV**
+remains the zoom-in limit. **Pan accel** and **Zoom accel** limit how quickly
+camera velocity can change, avoiding abrupt reframing. Dragging or manually
+changing FOV exits automatic mode.
+
+Before a point, game tracking can constrain Auto camera to the tracked team's
+lineup endzone. Starting the point releases that constraint without resetting
+the virtual pose or velocity, so the camera pans and zooms away from the lineup
+under the configured smoothing and acceleration limits instead of snapping to
+a full-field shot. Timeline seeks still initialize the camera directly at the
+requested time.
 
 ## Reusable component
 
@@ -174,6 +192,10 @@ Import the component and public types from `src/lib/index.ts`. Replace
 revokes a parent-provided URL, so the embedding app remains responsible for
 object URL cleanup. Set `allowLocalFiles` only when the viewer should show its
 own video and metadata pickers; supplying `source` disables those controls.
+
+Embedding game applications can pass recorded pull-release media times through
+`trustedDetectionBaselineTimesMs`. Each baseline trusts every visible detection
+before ordinary post-pull new-area admission resumes.
 
 The `settings` prop and `onSettingsChange` callback round-trip roll, tilt, FOV,
 and automatic camera tuning. `onPlaybackChange`, `onViewChange`, and

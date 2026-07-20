@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const DATABASE_VERSION = 14;
+const DATABASE_VERSION = 15;
 
 let applicationDatabase: Database.Database | null = null;
 
@@ -567,6 +567,29 @@ export function migrateDatabase(database: Database.Database): void {
             CHECK (lineup_endzone_override IS NULL OR lineup_endzone_override IN ('left', 'right'));
         `);
       }
+    }
+
+    if (currentVersion < 15) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS game_event_annotations (
+          id INTEGER PRIMARY KEY,
+          event_id INTEGER NOT NULL REFERENCES game_events(id) ON DELETE CASCADE,
+          role TEXT NOT NULL CHECK (
+            role IN (
+              'handler', 'thrower', 'receiver', 'intended_receiver',
+              'defender', 'scorer', 'outgoing_player', 'incoming_player'
+            )
+          ),
+          player_id INTEGER REFERENCES players(id) ON DELETE RESTRICT,
+          time_ms INTEGER NOT NULL CHECK (time_ms >= 0),
+          frame_index INTEGER NOT NULL CHECK (frame_index >= 0),
+          panorama_yaw REAL NOT NULL CHECK (panorama_yaw BETWEEN -3.141592653589793 AND 3.141592653589793),
+          panorama_pitch REAL NOT NULL CHECK (panorama_pitch BETWEEN -1.570796326794897 AND 1.570796326794897),
+          sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS game_event_annotations_event_id_idx
+          ON game_event_annotations(event_id, sort_order, id);
+      `);
     }
 
     database.pragma(`user_version = ${DATABASE_VERSION}`);

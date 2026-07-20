@@ -9,6 +9,7 @@ import {
   panoramaPointIsOnDisplaySide,
   perspectiveCameraBasis,
   projectPanoramaPoint,
+  unprojectPerspectivePoint,
 } from './perspective';
 
 const extent = {
@@ -69,6 +70,16 @@ describe('perspective projection', () => {
     );
     expect(projected?.x).toBeCloseTo(0.5, 8);
     expect(projected?.y).toBeCloseTo(0.5, 8);
+  });
+
+  it('round-trips manually selected viewport points with camera orientation', () => {
+    const orientedCamera = { ...camera, yaw: 0.3, pitch: -0.08, tilt: 0.12, roll: -0.07 };
+    const selected = { x: 0.71, y: 0.36 };
+    const panorama = unprojectPerspectivePoint(selected, orientedCamera);
+    expect(panorama).not.toBeNull();
+    const projected = projectPanoramaPoint(panorama!, orientedCamera);
+    expect(projected?.x).toBeCloseTo(selected.x, 8);
+    expect(projected?.y).toBeCloseTo(selected.y, 8);
   });
 
   it('counter-rotates the camera frame as a tilted rig pans', () => {

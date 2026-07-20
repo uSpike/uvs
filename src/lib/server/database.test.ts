@@ -35,7 +35,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(14);
+    expect(database.pragma('user_version', { simple: true })).toBe(15);
     expect(
       database.prepare(
         `SELECT season_rosters.name AS roster, tournaments.name AS tournament,
@@ -69,6 +69,9 @@ describe('database migrations', () => {
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_highlights'").get(),
     ).toEqual({ name: 'game_highlights' });
     expect(
+      database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_event_annotations'").get(),
+    ).toEqual({ name: 'game_event_annotations' });
+    expect(
       database.prepare('SELECT kind, name, is_default FROM season_strategies ORDER BY kind').all(),
     ).toEqual([
       { kind: 'defense', name: 'Person', is_default: 1 },
@@ -97,7 +100,7 @@ describe('database migrations', () => {
 
     expect(database.prepare('SELECT COUNT(*) AS count FROM season_rosters').get()).toEqual({ count: 0 });
     expect(database.prepare('SELECT COUNT(*) AS count FROM tournaments').get()).toEqual({ count: 0 });
-    expect(database.pragma('user_version', { simple: true })).toBe(14);
+    expect(database.pragma('user_version', { simple: true })).toBe(15);
     database.close();
   });
 
@@ -119,7 +122,7 @@ describe('database migrations', () => {
     expect(
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_players'").get(),
     ).toBeUndefined();
-    expect(database.pragma('user_version', { simple: true })).toBe(14);
+    expect(database.pragma('user_version', { simple: true })).toBe(15);
     database.close();
   });
 });

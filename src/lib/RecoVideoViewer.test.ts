@@ -45,11 +45,11 @@ describe('RecoVideoViewer', () => {
     expect(result.body).toContain('AutoCam will turn on when playback resumes');
   });
 
-  it('hides the diagnostic readout behind a details control', () => {
+  it('does not expose internal frame and FOV diagnostics', () => {
     const result = render(RecoVideoViewer);
 
-    expect(result.body).toContain('Show video details');
-    expect(result.body).toContain('Show frame, detection, and FOV details');
+    expect(result.body).not.toContain('Show video details');
+    expect(result.body).not.toContain('Show frame, detection, and FOV details');
     expect(result.body).not.toContain('viewport-readout');
   });
 });

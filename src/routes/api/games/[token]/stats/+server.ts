@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { parseGameEventPayload, parseGameEventType } from '$lib/game-events';
 import type { StartingPossession, TeamEndzone } from '$lib/game-stats';
+import type { SpatialAnnotationRole } from '$lib/game-stats';
 import { parseOptionalMatchupRole, type MatchupRole } from '$lib/matchup';
 import { requireEditorLock } from '$lib/server/editor-lock';
 import { requireGameAccess } from '$lib/server/access';
@@ -201,7 +202,23 @@ function eventInput(body: Record<string, unknown>): SaveEventInput {
     timeMs: nonNegativeInteger(body.timeMs, 'Event time'),
     type,
     payload: parseGameEventPayload(type, body.payload),
+    ...(body.annotations === undefined ? {} : { annotations: spatialAnnotations(body.annotations) }),
   };
+}
+
+function spatialAnnotations(value: unknown): NonNullable<SaveEventInput['annotations']> {
+  if (!Array.isArray(value)) throw new Error('Spatial annotations must be a list.');
+  return value.map((item, index) => {
+    const annotation = record(item, `Spatial annotation ${index + 1}`);
+    return {
+      role: String(annotation.role ?? '') as SpatialAnnotationRole,
+      playerId: optionalPositiveInteger(annotation.playerId, 'Annotation player'),
+      timeMs: nonNegativeInteger(annotation.timeMs, 'Annotation time'),
+      frameIndex: nonNegativeInteger(annotation.frameIndex, 'Annotation frame'),
+      panoramaYaw: finiteNumber(annotation.panoramaYaw, 'Annotation yaw'),
+      panoramaPitch: finiteNumber(annotation.panoramaPitch, 'Annotation pitch'),
+    };
+  });
 }
 
 function integerArray(value: unknown, name: string): number[] {
@@ -223,5 +240,11 @@ function optionalPositiveInteger(value: unknown, name: string): number | null {
 function nonNegativeInteger(value: unknown, name: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is invalid.`);
+  return parsed;
+}
+
+function finiteNumber(value: unknown, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`${name} is invalid.`);
   return parsed;
 }

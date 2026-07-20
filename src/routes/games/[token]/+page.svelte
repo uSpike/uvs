@@ -4,10 +4,14 @@
   import {
     RecoVideoViewer,
     type GameViewerSettings,
+    type RecoViewerPlaybackMarker,
+    type RecoViewerSpatialMarker,
+    type RecoViewerSpatialPoint,
     type RecoVideoViewerSource,
   } from '$lib';
   import GameStatsRecorder from '$lib/GameStatsRecorder.svelte';
-  import { autoCameraEndzoneAtTime, type GameTrackingSnapshot } from '$lib/game-stats';
+  import { gameEventLabel } from '$lib/game-events';
+  import { autoCameraEndzoneAtTime, gamePlaybackAnnotations, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
   import type { RecoViewerPlaybackState } from '$lib';
 
   let { data, form } = $props();
@@ -21,11 +25,18 @@
     pause: () => void;
     seekTo: (seconds: number) => void;
     stepFrames: (frameDelta: number) => void;
+    setAutoCameraEnabled: (enabled: boolean) => void;
     getPlaybackState: () => RecoViewerPlaybackState;
   } | null>(null);
   let copiedShareId = $state<number | null>(null);
   let statsEditing = $state(false);
-  let statsRecorder = $state<{ toggleEditing: () => void } | null>(null);
+  let statsRecorder = $state<{
+    toggleEditing: () => void;
+    placeSpatialPoint: (point: RecoViewerSpatialPoint) => void;
+    adjustSpatialPoint: (index: number, point: RecoViewerSpatialPoint) => void;
+  } | null>(null);
+  let spatialPlacementActive = $state(false);
+  let spatialMarkers = $state<RecoViewerSpatialMarker[]>([]);
   let highlightOverlay = $state<{
     description: string;
     position: number;
@@ -42,6 +53,10 @@
   const autoCameraEndzone = $derived(
     autoCameraEndzoneAtTime(trackingSnapshot.data, Math.round(viewerPlayback.currentTime * 1000)),
   );
+  const trustedDetectionBaselineTimesMs = $derived(
+    trackingSnapshot.data.points.map((point) => point.startTimeMs),
+  );
+  const actionPlaybackMarkers = $derived(buildActionPlaybackMarkers(trackingSnapshot));
 
   const emptyPlayback: RecoViewerPlaybackState = {
     currentTime: 0,
@@ -95,6 +110,44 @@
     settingsSaveForm?.requestSubmit();
   }
 
+  function buildActionPlaybackMarkers(snapshot: GameTrackingSnapshot): RecoViewerPlaybackMarker[] {
+    const playerNames = new Map(snapshot.data.players.map((player) => [player.id, player.name]));
+    return gamePlaybackAnnotations(snapshot.data).map((annotation) => ({
+      id: `${annotation.eventId}-${annotation.id}`,
+      label: gameEventLabel(annotation.eventType),
+      detail: `${annotation.playerId === null ? 'Unknown player' : playerNames.get(annotation.playerId) ?? 'Unknown player'} · ${playbackRoleLabel(annotation.role)}`,
+      tone: playbackMarkerTone(annotation.eventType),
+      timeMs: annotation.timeMs,
+      frameIndex: annotation.frameIndex,
+      panoramaYaw: annotation.panoramaYaw,
+      panoramaPitch: annotation.panoramaPitch,
+    }));
+  }
+
+  function playbackRoleLabel(role: SpatialAnnotationRole): string {
+    switch (role) {
+      case 'handler': return 'possession';
+      case 'thrower': return 'thrower';
+      case 'receiver': return 'receiver';
+      case 'intended_receiver': return 'intended receiver';
+      case 'defender': return 'defender';
+      case 'scorer': return 'scorer';
+      case 'outgoing_player': return 'player out';
+      case 'incoming_player': return 'player in';
+    }
+  }
+
+  function playbackMarkerTone(type: GameEventType): RecoViewerPlaybackMarker['tone'] {
+    switch (type) {
+      case 'possession_start': return 'possession';
+      case 'completion': return 'completion';
+      case 'turnover': return 'turnover';
+      case 'goal': return 'goal';
+      case 'defended': return 'defense';
+      default: return 'neutral';
+    }
+  }
+
   async function copyShareLink(id: number, token: string): Promise<void> {
     const shareUrl = new URL(`/share/${token}`, window.location.origin).href;
     try {
@@ -124,6 +177,12 @@
           settings={data.game.settings}
           title="Game video"
           {autoCameraEndzone}
+          {trustedDetectionBaselineTimesMs}
+          {spatialPlacementActive}
+          {spatialMarkers}
+          playbackMarkers={actionPlaybackMarkers}
+          onSpatialPointPlace={(point) => statsRecorder?.placeSpatialPoint(point)}
+          onSpatialPointAdjust={(index, point) => statsRecorder?.adjustSpatialPoint(index, point)}
           onPlaybackChange={(state) => viewerPlayback = state}
           onSettingsChange={data.role === 'admin' ? captureSettings : undefined}
           onSaveSettings={data.role === 'admin' ? saveViewerSettings : undefined}
@@ -259,6 +318,12 @@
         playPlayback={() => viewer?.play() ?? Promise.resolve()}
         seekPlayback={(seconds) => viewer?.seekTo(seconds)}
         stepPlaybackFrames={(frameDelta) => viewer?.stepFrames(frameDelta)}
+        recordingMode={currentSettings?.recordingMode ?? data.game.settings.recordingMode}
+        onSpatialStateChange={(state) => {
+          if (state.placementActive) viewer?.setAutoCameraEnabled(false);
+          spatialPlacementActive = state.placementActive;
+          spatialMarkers = state.markers;
+        }}
         onHighlightOverlayChange={(overlay) => highlightOverlay = overlay}
         onEditingChange={(value) => statsEditing = value}
         onSnapshotChange={(value) => trackingSnapshot = value}

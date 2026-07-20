@@ -7,10 +7,10 @@ import {
   buildDetectionAreaHistoryTimeline,
   buildPlayerTrackTimeline,
   detectionAreaStatus,
-  detectionsAcceptedForAutoCamera,
   detectionsWithEstablishedArea,
   predictedPlayersAtTime,
   requiredAutoCameraFov,
+  selectActionRegionDetections,
   stepAutoCamera,
   trackObservationsAtFrame,
   type PredictedPlayer,
@@ -173,7 +173,7 @@ describe('player track timeline', () => {
 });
 
 describe('detection area history', () => {
-  it('accepts detections in the current FOV and delays new areas outside it', () => {
+  it('records persistence before an occupied area becomes established', () => {
     const detectionSamples = [0, 10, 20, 30, 40, 50, 60].map((frameIndex) => ({
       frameIndex,
       detections: [
@@ -193,12 +193,6 @@ describe('detection area history', () => {
 
     const initial = detectionAreaStatus(detectionSamples[0].detections[0], model, 5);
     const pending = detectionAreaStatus(detectionSamples[1].detections[1], model, 5);
-    const pendingInsideFov = detectionAreaStatus(
-      detectionSamples[1].detections[1],
-      model,
-      5,
-      true,
-    );
     const included = detectionAreaStatus(detectionSamples[6].detections[1], model, 5);
     expect(initial).toEqual({
       included: false,
@@ -206,20 +200,7 @@ describe('detection area history', () => {
       remainingSeconds: 5,
     });
     expect(pending).toEqual({ included: false, historySeconds: 0, remainingSeconds: 5 });
-    expect(pendingInsideFov).toEqual({
-      included: true,
-      historySeconds: 0,
-      remainingSeconds: 0,
-    });
     expect(included).toEqual({ included: true, historySeconds: 5, remainingSeconds: 0 });
-    expect(
-      detectionsAcceptedForAutoCamera(
-        detectionSamples[1].detections,
-        model,
-        5,
-        (candidate) => candidate === detectionSamples[1].detections[1],
-      ),
-    ).toEqual([detectionSamples[1].detections[1]]);
   });
 
   it('restarts the delay when a new area disappears for several samples', () => {
@@ -236,6 +217,204 @@ describe('detection area history', () => {
     )!;
 
     expect(detectionsWithEstablishedArea(detectionSamples[5].detections, model, 2)).toHaveLength(1);
+  });
+
+  it('trusts both sides at a pull and carries that trust through fast sparse motion', () => {
+    const pullLeft = detection(-0.7);
+    const pullRight = detection(0.7);
+    const movedLeft = detection(-0.45);
+    const movedRight = detection(0.45);
+    const newSidelineArea = detection(1.4);
+    const detectionSamples = [
+      { frameIndex: 0, detections: [detection(0)] },
+      { frameIndex: 10, detections: [pullLeft, pullRight] },
+      { frameIndex: 20, detections: [movedLeft, movedRight, newSidelineArea] },
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 39 }),
+      4,
+      [1.5],
+    )!;
+
+    expect(detectionAreaStatus(pullLeft, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(detectionAreaStatus(movedLeft, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(detectionAreaStatus(movedRight, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(detectionAreaStatus(newSidelineArea, model, 5)).toEqual({
+      included: false,
+      historySeconds: 0,
+      remainingSeconds: 5,
+    });
+
+    const selection = selectActionRegionDetections(
+      detectionSamples[2].detections,
+      model,
+      5,
+      { yaw: 0, pitch: 0 },
+      4,
+    );
+    expect(selection.included).toEqual([movedLeft, movedRight]);
+    expect(selection.stateByDetection.get(newSidelineArea)).toBe('pending');
+  });
+
+  it('replaces the trusted detection set at every pull', () => {
+    const firstPull = detection(-0.7);
+    const laterArea = detection(1.2);
+    const secondPull = detection(1.2);
+    const detectionSamples = [
+      { frameIndex: 10, detections: [firstPull] },
+      { frameIndex: 20, detections: [laterArea] },
+      { frameIndex: 30, detections: [secondPull] },
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 39 }),
+      4,
+      [1, 3],
+    )!;
+
+    expect(detectionAreaStatus(laterArea, model, 5).included).toBe(false);
+    expect(detectionAreaStatus(secondPull, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('keeps a fast pull-baseline runner trusted near a newer untrusted area', () => {
+    const pullRunner = detection(0);
+    const movedRunner = detection(0.2);
+    const newArea = detection(0.7);
+    const runnerNearNewArea = detection(0.55);
+    const detectionSamples = [
+      { frameIndex: 10, detections: [pullRunner] },
+      { frameIndex: 20, detections: [movedRunner, newArea] },
+      { frameIndex: 30, detections: [runnerNearNewArea] },
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 39 }),
+      4,
+      [1],
+    )!;
+
+    expect(detectionAreaStatus(newArea, model, 5).included).toBe(false);
+    expect(detectionAreaStatus(runnerNearNewArea, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('keeps separate trusted trails when pull-baseline players spread apart', () => {
+    const left = detection(-0.5);
+    const right = detection(0.5);
+    const detectionSamples = [
+      { frameIndex: 10, detections: [detection(0)] },
+      { frameIndex: 20, detections: [detection(-0.2), detection(0.2)] },
+      { frameIndex: 30, detections: [left, right] },
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 39 }),
+      4,
+      [1],
+    )!;
+
+    expect(detectionAreaStatus(left, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(detectionAreaStatus(right, model, 5).historySeconds).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('keeps a persistent remote area outside the connected action region', () => {
+    const actionLeft = detection(-0.08);
+    const actionRight = detection(0.1);
+    const newActionDetection = detection(0.2);
+    const sideline = detection(0.9);
+    const areaHistory = {
+      historyByDetection: new Map<WebDetection, number>([
+        [actionLeft, 8],
+        [actionRight, 8],
+        [newActionDetection, 0],
+        [sideline, 20],
+      ]),
+    };
+
+    const selection = selectActionRegionDetections(
+      [actionLeft, actionRight, newActionDetection, sideline],
+      areaHistory,
+      5,
+      { yaw: 0, pitch: 0 },
+      16,
+    );
+
+    expect(selection.included).toEqual([actionLeft, actionRight, newActionDetection]);
+    expect(selection.stateByDetection.get(newActionDetection)).toBe('included');
+    expect(selection.stateByDetection.get(sideline)).toBe('excluded');
+  });
+
+  it('keeps a disconnected new area pending instead of using the camera FOV', () => {
+    const action = detection(0);
+    const sideline = detection(0.8);
+    const areaHistory = {
+      historyByDetection: new Map<WebDetection, number>([
+        [action, 8],
+        [sideline, 1],
+      ]),
+    };
+
+    const selection = selectActionRegionDetections(
+      [action, sideline],
+      areaHistory,
+      5,
+      { yaw: 0, pitch: 0 },
+      16,
+    );
+
+    expect(selection.included).toEqual([action]);
+    expect(selection.stateByDetection.get(sideline)).toBe('pending');
+  });
+
+  it('does not let a new detection closer to the camera replace established action', () => {
+    const sideline = detection(0);
+    const actionLeft = detection(0.35);
+    const actionRight = detection(0.43);
+    const areaHistory = {
+      historyByDetection: new Map<WebDetection, number>([
+        [sideline, 0],
+        [actionLeft, 8],
+        [actionRight, 8],
+      ]),
+    };
+
+    const selection = selectActionRegionDetections(
+      [sideline, actionLeft, actionRight],
+      areaHistory,
+      5,
+      { yaw: 0, pitch: 0 },
+      6,
+    );
+
+    expect(selection.included).toEqual([actionLeft, actionRight]);
+    expect(selection.stateByDetection.get(sideline)).toBe('pending');
+  });
+
+  it('does not impose a player-count limit on one connected action component', () => {
+    const detections = Array.from({ length: 24 }, (_, index) => detection(-0.46 + index * 0.04));
+    const areaHistory = {
+      historyByDetection: new Map(detections.map((item) => [item, 8])),
+    };
+
+    const selection = selectActionRegionDetections(
+      detections,
+      areaHistory,
+      5,
+      { yaw: 0, pitch: 0 },
+      8,
+    );
+
+    expect(selection.included).toHaveLength(24);
   });
 });
 

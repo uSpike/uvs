@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import {
   calculateGameStatistics,
   calculatePointState,
+  type DefendedPayload,
+  type EventSpatialAnnotation,
   type GameEventPayload,
   type GameEventType,
   type GameHighlight,
@@ -10,6 +12,7 @@ import {
   type ManualPointSummary,
   type PossessionStartPayload,
   type StartingPossession,
+  type SpatialAnnotationRole,
   type StrategyKind,
   type StrategySetPayload,
   type TeamEndzone,
@@ -43,7 +46,11 @@ export interface SaveEventInput {
   timeMs: number;
   type: GameEventType;
   payload: GameEventPayload;
+  annotations?: SaveEventSpatialAnnotationInput[];
 }
+
+/** Manual panorama-space player position accepted while recording an event. */
+export type SaveEventSpatialAnnotationInput = Omit<EventSpatialAnnotation, 'id'>;
 
 /** Point fields accepted when replacing a game's paper score-sheet summary. */
 export type SaveManualPointInput = Omit<
@@ -94,6 +101,16 @@ interface EventRow {
   payload_json: string;
   created_at: string;
   updated_at: string;
+}
+
+interface EventAnnotationRow {
+  id: number;
+  role: SpatialAnnotationRole;
+  player_id: number | null;
+  time_ms: number;
+  frame_index: number;
+  panorama_yaw: number;
+  panorama_pitch: number;
 }
 
 interface TrackingPlayerRow {
@@ -322,12 +339,15 @@ export class GameTrackingRepository {
   addEvent(token: string, input: SaveEventInput): GameTrackingSnapshot {
     const game = this.requireGame(token);
     const parsed = this.validateEventInput(game, input, null);
-    this.database
-      .prepare(
-        `INSERT INTO game_events (game_id, point_id, time_ms, type, payload_json)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(game.id, parsed.pointId, parsed.timeMs, parsed.type, JSON.stringify(parsed.payload));
+    this.database.transaction(() => {
+      const result = this.database
+        .prepare(
+          `INSERT INTO game_events (game_id, point_id, time_ms, type, payload_json)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(game.id, parsed.pointId, parsed.timeMs, parsed.type, JSON.stringify(parsed.payload));
+      this.replaceEventAnnotations(Number(result.lastInsertRowid), parsed.annotations ?? []);
+    })();
     return this.requiredSnapshot(token);
   }
 
@@ -339,14 +359,19 @@ export class GameTrackingRepository {
       .get(eventId, game.id) as { id: number } | undefined;
     if (!existing) throw new Error('Event not found.');
     const parsed = this.validateEventInput(game, input, eventId);
-    this.database
-      .prepare(
-        `UPDATE game_events
-            SET point_id = ?, time_ms = ?, type = ?, payload_json = ?,
-                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          WHERE id = ?`,
-      )
-      .run(parsed.pointId, parsed.timeMs, parsed.type, JSON.stringify(parsed.payload), eventId);
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE game_events
+              SET point_id = ?, time_ms = ?, type = ?, payload_json = ?,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?`,
+        )
+        .run(parsed.pointId, parsed.timeMs, parsed.type, JSON.stringify(parsed.payload), eventId);
+      if (parsed.annotations !== undefined) {
+        this.replaceEventAnnotations(eventId, parsed.annotations);
+      }
+    })();
     return this.requiredSnapshot(token);
   }
 
@@ -667,6 +692,11 @@ export class GameTrackingRepository {
     const pointEvents = this.database.prepare(
       'SELECT * FROM game_events WHERE point_id = ? ORDER BY time_ms, id',
     );
+    const eventAnnotations = this.database.prepare(
+      `SELECT id, role, player_id, time_ms, frame_index, panorama_yaw, panorama_pitch
+         FROM game_event_annotations
+        WHERE event_id = ? ORDER BY sort_order, id`,
+    );
     const pointRoleOverrides = this.database.prepare(
       `SELECT player_id, matchup_role
          FROM game_point_player_matchup_overrides
@@ -691,13 +721,14 @@ export class GameTrackingRepository {
           matchup_role: MatchupRole;
         }>).map((override) => [override.player_id, override.matchup_role]),
       ),
-      events: (pointEvents.all(point.id) as EventRow[]).map(mapEvent),
+      events: (pointEvents.all(point.id) as EventRow[]).map((event) =>
+        mapEvent(event, eventAnnotations.all(event.id) as EventAnnotationRow[])),
     }));
     const standaloneEvents = (
       this.database
         .prepare('SELECT * FROM game_events WHERE game_id = ? AND point_id IS NULL ORDER BY time_ms, id')
         .all(row.id) as EventRow[]
-    ).map(mapEvent);
+    ).map((event) => mapEvent(event, eventAnnotations.all(event.id) as EventAnnotationRow[]));
     const highlightPlayers = this.database.prepare(
       `SELECT player_id FROM game_highlight_players
         WHERE highlight_id = ? ORDER BY sort_order, player_id`,
@@ -800,7 +831,7 @@ export class GameTrackingRepository {
     const timeMs = timecode(input.timeMs);
     if (type === 'score_set') {
       if (input.pointId !== null) throw new Error('Score synchronization belongs to the game timeline.');
-      return { pointId: null, timeMs, type, payload };
+      return { pointId: null, timeMs, type, payload, annotations: this.validateEventAnnotations(game, input.annotations) };
     }
     if (!Number.isSafeInteger(input.pointId) || input.pointId === null) {
       throw new Error('Select a point for this event.');
@@ -877,7 +908,70 @@ export class GameTrackingRepository {
         throw new Error('A stoppage cannot end before it starts.');
       }
     }
-    return { pointId: input.pointId, timeMs, type, payload };
+    return {
+      pointId: input.pointId,
+      timeMs,
+      type,
+      payload,
+      annotations: this.validateEventAnnotations(game, input.annotations, pointRow.start_time_ms),
+    };
+  }
+
+  private validateEventAnnotations(
+    game: GameTrackingRow,
+    annotations: SaveEventSpatialAnnotationInput[] | undefined,
+    pointStartTimeMs = 0,
+  ): SaveEventSpatialAnnotationInput[] | undefined {
+    if (annotations === undefined) return undefined;
+    if (game.has_video !== 1) throw new Error('Spatial annotations require a game with video.');
+    if (annotations.length > 12) throw new Error('An event may contain at most 12 spatial annotations.');
+    const parsed = annotations.map((annotation) => ({
+      role: spatialAnnotationRole(annotation.role),
+      playerId: annotation.playerId,
+      timeMs: timecode(annotation.timeMs),
+      frameIndex: nonNegativeInteger(annotation.frameIndex, 'Annotation frame'),
+      panoramaYaw: finiteRange(annotation.panoramaYaw, -Math.PI, Math.PI, 'Annotation yaw'),
+      panoramaPitch: finiteRange(
+        annotation.panoramaPitch,
+        -Math.PI / 2,
+        Math.PI / 2,
+        'Annotation pitch',
+      ),
+    }));
+    if (parsed.some((annotation) => annotation.timeMs < pointStartTimeMs)) {
+      throw new Error('An event annotation cannot occur before the pull.');
+    }
+    this.requireTournamentPlayers(
+      game.id,
+      uniqueIds(
+        parsed.flatMap((annotation) => annotation.playerId === null ? [] : [annotation.playerId]),
+        'Annotation player',
+      ),
+    );
+    return parsed;
+  }
+
+  private replaceEventAnnotations(
+    eventId: number,
+    annotations: SaveEventSpatialAnnotationInput[],
+  ): void {
+    this.database.prepare('DELETE FROM game_event_annotations WHERE event_id = ?').run(eventId);
+    const insert = this.database.prepare(
+      `INSERT INTO game_event_annotations (
+         event_id, role, player_id, time_ms, frame_index,
+         panorama_yaw, panorama_pitch, sort_order
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    annotations.forEach((annotation, index) => insert.run(
+      eventId,
+      annotation.role,
+      annotation.playerId,
+      annotation.timeMs,
+      annotation.frameIndex,
+      annotation.panoramaYaw,
+      annotation.panoramaPitch,
+      index,
+    ));
   }
 
   private validateHighlightInput(
@@ -1104,7 +1198,7 @@ function snapshot(data: TrackingGameData): GameTrackingSnapshot {
   };
 }
 
-function mapEvent(row: EventRow): TrackingEvent {
+function mapEvent(row: EventRow, annotations: EventAnnotationRow[]): TrackingEvent {
   const type = parseGameEventType(row.type);
   return {
     id: row.id,
@@ -1112,6 +1206,15 @@ function mapEvent(row: EventRow): TrackingEvent {
     timeMs: row.time_ms,
     type,
     payload: parseGameEventPayload(type, JSON.parse(row.payload_json) as unknown),
+    annotations: annotations.map((annotation) => ({
+      id: annotation.id,
+      role: annotation.role,
+      playerId: annotation.player_id,
+      timeMs: annotation.time_ms,
+      frameIndex: annotation.frame_index,
+      panoramaYaw: annotation.panorama_yaw,
+      panoramaPitch: annotation.panorama_pitch,
+    })),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1159,6 +1262,9 @@ function requireVideoPlayerAttribution(type: GameEventType, payload: GameEventPa
   } else if (type === 'turnover') {
     const value = payload as { throwerId: number | null };
     if (value.throwerId === null) throw new Error('Select the turnover thrower.');
+  } else if (type === 'defended') {
+    const value = payload as DefendedPayload;
+    if (value.defenderId === null) throw new Error('Select the defender.');
   } else if (type === 'goal') {
     const value = payload as {
       throwerId: number | null;
@@ -1185,6 +1291,34 @@ function present(values: Array<number | null>): number[] {
 function timecode(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('Timecode must be a non-negative whole number of milliseconds.');
   return value;
+}
+
+function nonNegativeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative whole number.`);
+  }
+  return value;
+}
+
+function finiteRange(value: number, minimum: number, maximum: number, name: string): number {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
+function spatialAnnotationRole(value: unknown): SpatialAnnotationRole {
+  if (
+    value === 'handler' ||
+    value === 'thrower' ||
+    value === 'receiver' ||
+    value === 'intended_receiver' ||
+    value === 'defender' ||
+    value === 'scorer' ||
+    value === 'outgoing_player' ||
+    value === 'incoming_player'
+  ) return value;
+  throw new Error('Select a supported spatial annotation role.');
 }
 
 function statisticCount(value: number, name: string, maximum = 9_999): number {

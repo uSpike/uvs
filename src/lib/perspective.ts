@@ -245,3 +245,40 @@ export function projectPanoramaPoint(
   }
   return { x, y };
 }
+
+/** Convert a normalized viewport position back into a panorama-space direction. */
+export function unprojectPerspectivePoint(
+  normalized: { x: number; y: number },
+  camera: PerspectiveCamera,
+): PanoramaPoint | null {
+  if (
+    !Number.isFinite(normalized.x) ||
+    !Number.isFinite(normalized.y) ||
+    normalized.x < 0 ||
+    normalized.x > 1 ||
+    normalized.y < 0 ||
+    normalized.y > 1 ||
+    !Number.isFinite(camera.aspect) ||
+    camera.aspect <= 0
+  ) return null;
+
+  const tanHalfVerticalFov = Math.tan((clampFov(camera.fovDegrees) * Math.PI) / 360);
+  const ndcX = normalized.x * 2 - 1;
+  const ndcY = 1 - normalized.y * 2;
+  const basis = perspectiveCameraBasis(camera);
+  const direction = normalize({
+    x: basis.forward.x +
+      basis.right.x * ndcX * tanHalfVerticalFov * camera.aspect +
+      basis.up.x * ndcY * tanHalfVerticalFov,
+    y: basis.forward.y +
+      basis.right.y * ndcX * tanHalfVerticalFov * camera.aspect +
+      basis.up.y * ndcY * tanHalfVerticalFov,
+    z: basis.forward.z +
+      basis.right.z * ndcX * tanHalfVerticalFov * camera.aspect +
+      basis.up.z * ndcY * tanHalfVerticalFov,
+  });
+  return {
+    yaw: Math.atan2(direction.x, direction.z),
+    pitch: Math.asin(Math.min(1, Math.max(-1, direction.y))),
+  };
+}

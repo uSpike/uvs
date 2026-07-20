@@ -22,6 +22,17 @@ export type StoppageKind = 'foul' | 'injury' | 'timeout' | 'other';
 /** Tactical system category configured on a season roster. */
 export type StrategyKind = 'offense' | 'defense';
 
+/** Semantic meaning of a manually marked player position within an event. */
+export type SpatialAnnotationRole =
+  | 'handler'
+  | 'thrower'
+  | 'receiver'
+  | 'intended_receiver'
+  | 'defender'
+  | 'scorer'
+  | 'outgoing_player'
+  | 'incoming_player';
+
 /** Every action that may appear on a game's statistics timeline. */
 export type GameEventType =
   | 'possession_start'
@@ -138,6 +149,17 @@ export type GameEventPayload =
   | ScoreSetPayload
   | StrategySetPayload;
 
+/** One manual, time-aligned player position marked in panorama space. */
+export interface EventSpatialAnnotation {
+  id: number;
+  role: SpatialAnnotationRole;
+  playerId: number | null;
+  timeMs: number;
+  frameIndex: number;
+  panoramaYaw: number;
+  panoramaPitch: number;
+}
+
 /** One persisted, editable game event. */
 export interface TrackingEvent {
   id: number;
@@ -145,6 +167,7 @@ export interface TrackingEvent {
   timeMs: number;
   type: GameEventType;
   payload: GameEventPayload;
+  annotations: EventSpatialAnnotation[];
   createdAt: string;
   updatedAt: string;
 }
@@ -163,6 +186,54 @@ export interface TrackingPoint {
   startingPlayerIds: number[];
   matchupRoleOverrides: Record<number, MatchupRole>;
   events: TrackingEvent[];
+}
+
+/** Return the latest manually marked position that established a player's possession. */
+export function latestHandlerSpatialAnnotation(
+  point: TrackingPoint,
+  playerId: number,
+): EventSpatialAnnotation | null {
+  return point.events
+    .flatMap((event) => event.annotations)
+    .filter((annotation) =>
+      annotation.playerId === playerId &&
+      (annotation.role === 'handler' || annotation.role === 'receiver'))
+    .sort((left, right) => right.timeMs - left.timeMs || right.id - left.id)[0] ?? null;
+}
+
+/** One deduplicated saved position that may flash during ordinary game playback. */
+export interface GamePlaybackAnnotation extends EventSpatialAnnotation {
+  eventId: number;
+  eventType: GameEventType;
+}
+
+/**
+ * Flatten saved event positions for playback. Carried thrower positions duplicate the
+ * possession/reception that established them, so identical player/time/position labels
+ * are emitted only once.
+ */
+export function gamePlaybackAnnotations(data: TrackingGameData): GamePlaybackAnnotation[] {
+  const seen = new Set<string>();
+  const annotations: GamePlaybackAnnotation[] = [];
+  const events = [
+    ...data.points.flatMap((point) => point.events),
+    ...data.standaloneEvents,
+  ].sort((left, right) => left.timeMs - right.timeMs || left.id - right.id);
+  for (const event of events) {
+    for (const annotation of event.annotations) {
+      const key = [
+        annotation.playerId ?? 'unknown',
+        annotation.timeMs,
+        annotation.frameIndex,
+        annotation.panoramaYaw,
+        annotation.panoramaPitch,
+      ].join(':');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      annotations.push({ ...annotation, eventId: event.id, eventType: event.type });
+    }
+  }
+  return annotations.sort((left, right) => left.timeMs - right.timeMs || left.id - right.id);
 }
 
 /** Whole-game player totals copied from a paper score sheet. */
@@ -339,6 +410,12 @@ export interface PointResultSummary {
   opponentScore: number;
   result: 'won' | 'lost' | 'open';
   breakAgainst: boolean;
+}
+
+/** Score visible at a particular position in a game's video timeline. */
+export interface GameScore {
+  ourScore: number;
+  opponentScore: number;
 }
 
 interface ParticipationInterval {
@@ -532,6 +609,38 @@ export function calculatePointResults(data: TrackingGameData): PointResultSummar
       result: 'open',
       breakAgainst: false,
     });
+}
+
+/** Calculate the score after applying only scoring events reached in the video. */
+export function calculateScoreAtTime(data: TrackingGameData, timeMs: number): GameScore {
+  let ourScore = data.game.initialOurScore;
+  let opponentScore = data.game.initialOpponentScore;
+  const cutoffTimeMs = Number.isFinite(timeMs) ? Math.max(0, timeMs) : 0;
+  const terminalEventIds = new Set(
+    data.points
+      .map((point) => sortedEvents(point.events).find(
+        (event) => event.type === 'goal' || event.type === 'conceded',
+      )?.id)
+      .filter((id): id is number => id !== undefined),
+  );
+
+  for (const event of sortedEvents([
+    ...data.standaloneEvents,
+    ...data.points.flatMap((point) => point.events),
+  ])) {
+    if (event.timeMs > cutoffTimeMs) break;
+    if (event.type === 'score_set') {
+      const payload = event.payload as ScoreSetPayload;
+      ourScore = payload.ourScore;
+      opponentScore = payload.opponentScore;
+    } else if (terminalEventIds.has(event.id) && event.type === 'goal') {
+      ourScore += 1;
+    } else if (terminalEventIds.has(event.id) && event.type === 'conceded') {
+      opponentScore += 1;
+    }
+  }
+
+  return { ourScore, opponentScore };
 }
 
 /** Return the latest recorded position in a point, including a closed stoppage's end. */

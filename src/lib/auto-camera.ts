@@ -1,9 +1,11 @@
-import type {
-  MetadataTimeline,
-  PanoramaExtent,
-  PanoramaPoint,
-  WebDetection,
-  WebTrackState,
+import {
+  frameIndexAtTime,
+  type DetectionSample,
+  type MetadataTimeline,
+  type PanoramaExtent,
+  type PanoramaPoint,
+  type WebDetection,
+  type WebTrackState,
 } from './metadata';
 import {
   MAX_FOV_DEGREES,
@@ -18,6 +20,7 @@ const MIN_MOMENTUM_OBSERVATIONS = 4;
 const MAX_PLAYER_SPEED_RADIANS = (20 * Math.PI) / 180;
 const MAX_PREDICTION_OFFSET_RADIANS = (15 * Math.PI) / 180;
 const DETECTION_AREA_RADIUS_RADIANS = (8 * Math.PI) / 180;
+const MAX_TRUSTED_AREA_RADIUS_RADIANS = (24 * Math.PI) / 180;
 const ASSOCIATION_BASE_RADIANS = (6 * Math.PI) / 180;
 const ASSOCIATION_SPEED_RADIANS = (24 * Math.PI) / 180;
 const MAX_FRAME_PADDING_PERCENT = 45;
@@ -75,6 +78,13 @@ export interface DetectionAreaStatus {
   remainingSeconds: number;
 }
 
+export type ActionRegionDetectionState = 'included' | 'pending' | 'excluded';
+
+export interface ActionRegionSelection {
+  included: WebDetection[];
+  stateByDetection: Map<WebDetection, ActionRegionDetectionState>;
+}
+
 export interface AutoCameraSubject {
   observedPoint: PanoramaPoint;
   predictedPoint: PanoramaPoint;
@@ -94,6 +104,7 @@ export interface PredictedPlayer extends AutoCameraSubject {
 
 export interface AutoCameraConfig {
   newAreaDelaySeconds: number;
+  actionJoinDistanceDegrees: number;
   lookAheadSeconds: number;
   smoothingSeconds: number;
   maxPanSpeedDegrees: number;
@@ -122,6 +133,7 @@ export interface AutoCameraStep {
 
 export const DEFAULT_AUTO_CAMERA_CONFIG: AutoCameraConfig = {
   newAreaDelaySeconds: 5,
+  actionJoinDistanceDegrees: 10,
   lookAheadSeconds: 1.5,
   smoothingSeconds: 1.4,
   maxPanSpeedDegrees: 40,
@@ -246,6 +258,7 @@ function sampleCadenceSeconds(
 export function buildDetectionAreaHistoryTimeline(
   metadata: MetadataTimeline,
   durationSeconds: number,
+  trustedBaselineTimesSeconds: readonly number[] = [],
 ): DetectionAreaHistoryTimeline | null {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     return null;
@@ -256,6 +269,7 @@ export function buildDetectionAreaHistoryTimeline(
     point: PanoramaPoint;
     firstSeenSeconds: number;
     lastSeenSeconds: number;
+    trusted: boolean;
   }
 
   const frameCount = Math.max(1, metadata.lastFrameIndex + 1);
@@ -266,6 +280,11 @@ export function buildDetectionAreaHistoryTimeline(
     metadata.manifest.detection_interval,
   );
   const retentionSeconds = Math.max(1.25, nominalSampleSeconds * 2.25);
+  const trustedBaselineSamples = detectionBaselineSamples(
+    metadata,
+    durationSeconds,
+    trustedBaselineTimesSeconds,
+  );
   const historyByDetection = new Map<WebDetection, number>();
   let activeAreas: ActiveArea[] = [];
   let initialAreasCreated = false;
@@ -276,6 +295,20 @@ export function buildDetectionAreaHistoryTimeline(
       (detection): detection is WebDetection & { panorama: PanoramaPoint } =>
         detection.panorama !== null,
     );
+    if (trustedBaselineSamples.has(sample)) {
+      activeAreas = detections.map((detection) => {
+        historyByDetection.set(detection, Number.POSITIVE_INFINITY);
+        return {
+          classId: detection.class_id,
+          point: detection.panorama,
+          firstSeenSeconds: timeSeconds,
+          lastSeenSeconds: timeSeconds,
+          trusted: true,
+        };
+      });
+      initialAreasCreated = true;
+      continue;
+    }
     if (!initialAreasCreated && detections.length > 0) {
       activeAreas = detections.map((detection) => {
         historyByDetection.set(detection, 0);
@@ -284,6 +317,7 @@ export function buildDetectionAreaHistoryTimeline(
           point: detection.panorama,
           firstSeenSeconds: timeSeconds,
           lastSeenSeconds: timeSeconds,
+          trusted: false,
         };
       });
       initialAreasCreated = true;
@@ -294,32 +328,60 @@ export function buildDetectionAreaHistoryTimeline(
       (area) => timeSeconds - area.lastSeenSeconds <= retentionSeconds,
     );
     const areaPoints = new Map<ActiveArea, PanoramaPoint[]>();
+    const propagatedTrustedAreas: ActiveArea[] = [];
     for (const detection of detections) {
-      let nearestArea: ActiveArea | null = null;
-      let nearestDistance = Number.POSITIVE_INFINITY;
+      let nearestTrustedArea: ActiveArea | null = null;
+      let nearestTrustedDistance = Number.POSITIVE_INFINITY;
+      let nearestUntrustedArea: ActiveArea | null = null;
+      let nearestUntrustedDistance = Number.POSITIVE_INFINITY;
       for (const area of activeAreas) {
         if (area.classId !== detection.class_id) continue;
         const distance = angularDistance(area.point, detection.panorama);
-        if (distance <= DETECTION_AREA_RADIUS_RADIANS && distance < nearestDistance) {
-          nearestArea = area;
-          nearestDistance = distance;
+        const elapsedSeconds = Math.max(0, timeSeconds - area.lastSeenSeconds);
+        const matchingRadius = area.trusted
+          ? Math.min(
+              MAX_TRUSTED_AREA_RADIUS_RADIANS,
+              DETECTION_AREA_RADIUS_RADIANS + MAX_PLAYER_SPEED_RADIANS * elapsedSeconds,
+            )
+          : DETECTION_AREA_RADIUS_RADIANS;
+        if (distance > matchingRadius) continue;
+        if (area.trusted && distance < nearestTrustedDistance) {
+          nearestTrustedArea = area;
+          nearestTrustedDistance = distance;
+        } else if (!area.trusted && distance < nearestUntrustedDistance) {
+          nearestUntrustedArea = area;
+          nearestUntrustedDistance = distance;
         }
       }
 
+      let nearestArea = nearestTrustedArea ?? nearestUntrustedArea;
       if (!nearestArea) {
         nearestArea = {
           classId: detection.class_id,
           point: detection.panorama,
           firstSeenSeconds: timeSeconds,
           lastSeenSeconds: timeSeconds,
+          trusted: false,
         };
         activeAreas.push(nearestArea);
       }
-      const historySeconds = Math.max(0, timeSeconds - nearestArea.firstSeenSeconds);
+      const historySeconds = nearestArea.trusted
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, timeSeconds - nearestArea.firstSeenSeconds);
       historyByDetection.set(detection, historySeconds);
-      const points = areaPoints.get(nearestArea) ?? [];
-      points.push(detection.panorama);
-      areaPoints.set(nearestArea, points);
+      if (nearestArea.trusted) {
+        propagatedTrustedAreas.push({
+          classId: detection.class_id,
+          point: detection.panorama,
+          firstSeenSeconds: nearestArea.firstSeenSeconds,
+          lastSeenSeconds: timeSeconds,
+          trusted: true,
+        });
+      } else {
+        const points = areaPoints.get(nearestArea) ?? [];
+        points.push(detection.panorama);
+        areaPoints.set(nearestArea, points);
+      }
     }
 
     for (const [area, points] of areaPoints) {
@@ -329,9 +391,59 @@ export function buildDetectionAreaHistoryTimeline(
       };
       area.lastSeenSeconds = timeSeconds;
     }
+    activeAreas.push(...propagatedTrustedAreas);
   }
 
   return { historyByDetection };
+}
+
+function detectionBaselineSamples(
+  metadata: MetadataTimeline,
+  durationSeconds: number,
+  baselineTimesSeconds: readonly number[],
+): Set<DetectionSample> {
+  const result = new Set<DetectionSample>();
+  const samples = metadata.detectionSamples;
+  if (samples.length === 0) return result;
+
+  for (const timeSeconds of baselineTimesSeconds) {
+    if (!Number.isFinite(timeSeconds) || timeSeconds < 0 || timeSeconds > durationSeconds) {
+      continue;
+    }
+    const targetFrame = frameIndexAtTime(
+      timeSeconds,
+      durationSeconds,
+      metadata.lastFrameIndex,
+    );
+    let low = 0;
+    let high = samples.length - 1;
+    let previousIndex = -1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (samples[middle].frameIndex <= targetFrame) {
+        previousIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+
+    if (
+      previousIndex >= 0 &&
+      targetFrame - samples[previousIndex].frameIndex <= metadata.manifest.detection_interval
+    ) {
+      result.add(samples[previousIndex]);
+      continue;
+    }
+    const nextIndex = previousIndex + 1;
+    if (
+      nextIndex < samples.length &&
+      samples[nextIndex].frameIndex - targetFrame <= metadata.manifest.detection_interval
+    ) {
+      result.add(samples[nextIndex]);
+    }
+  }
+  return result;
 }
 
 export function detectionsWithEstablishedArea(
@@ -344,22 +456,90 @@ export function detectionsWithEstablishedArea(
   );
 }
 
-/** Include detections already visible to the camera or established by area history. */
-export function detectionsAcceptedForAutoCamera(
+/**
+ * Select the spatially connected detection component that contains the current action.
+ *
+ * Pull-baseline detections remain included even when disconnected. Otherwise, persistence only
+ * makes a detection eligible to extend the component; it never causes a disconnected area to
+ * influence framing. New detections touching the selected component are admitted immediately so
+ * normal player motion does not wait on the area-history delay.
+ */
+export function selectActionRegionDetections(
   detections: WebDetection[],
   areaHistory: DetectionAreaHistoryTimeline | null,
   minimumHistorySeconds: number,
-  isInsideCurrentFov: (detection: WebDetection) => boolean,
-): WebDetection[] {
-  return detections.filter(
-    (detection) =>
-      detectionAreaStatus(
-        detection,
-        areaHistory,
-        minimumHistorySeconds,
-        isInsideCurrentFov(detection),
-      ).included,
+  actionAnchor: PanoramaPoint,
+  joinDistanceDegrees: number,
+): ActionRegionSelection {
+  const candidates = detections.filter(
+    (detection): detection is WebDetection & { panorama: PanoramaPoint } =>
+      detection.panorama !== null,
   );
+  const stateByDetection = new Map<WebDetection, ActionRegionDetectionState>();
+  for (const detection of detections) {
+    stateByDetection.set(detection, 'excluded');
+  }
+  if (candidates.length === 0) {
+    return { included: [], stateByDetection };
+  }
+
+  const joinDistance =
+    (Math.max(1, Number.isFinite(joinDistanceDegrees) ? joinDistanceDegrees : 1) * Math.PI) /
+    180;
+  const established = candidates.filter((detection) =>
+    detectionAreaStatus(detection, areaHistory, minimumHistorySeconds).included,
+  );
+  const trusted = candidates.filter(
+    (detection) =>
+      areaHistory?.historyByDetection.get(detection) === Number.POSITIVE_INFINITY,
+  );
+  const seedCandidates =
+    trusted.length > 0 ? trusted : established.length > 0 ? established : candidates;
+  let seed = seedCandidates[0];
+  let seedDistance = angularDistance(seed.panorama, actionAnchor);
+  for (const detection of seedCandidates.slice(1)) {
+    const distance = angularDistance(detection.panorama, actionAnchor);
+    if (distance < seedDistance) {
+      seed = detection;
+      seedDistance = distance;
+    }
+  }
+
+  const backbone = trusted.length > 0 ? [...trusted] : [seed];
+  const backboneSet = new Set<WebDetection>(backbone);
+  for (let memberIndex = 0; memberIndex < backbone.length; memberIndex += 1) {
+    const member = backbone[memberIndex];
+    for (const detection of established) {
+      if (
+        !backboneSet.has(detection) &&
+        angularDistance(member.panorama, detection.panorama) <= joinDistance
+      ) {
+        backbone.push(detection);
+        backboneSet.add(detection);
+      }
+    }
+  }
+
+  const included = candidates.filter(
+    (detection) =>
+      backboneSet.has(detection) ||
+      backbone.some(
+        (member) => angularDistance(member.panorama, detection.panorama) <= joinDistance,
+      ),
+  );
+  const includedSet = new Set(included);
+  const establishedSet = new Set(established);
+  for (const detection of candidates) {
+    stateByDetection.set(
+      detection,
+      includedSet.has(detection)
+        ? 'included'
+        : establishedSet.has(detection)
+          ? 'excluded'
+          : 'pending',
+    );
+  }
+  return { included, stateByDetection };
 }
 
 /** Return the persistence status used to include or withhold a detection. */
@@ -367,7 +547,6 @@ export function detectionAreaStatus(
   detection: WebDetection,
   areaHistory: DetectionAreaHistoryTimeline | null,
   minimumHistorySeconds: number,
-  insideCurrentFov = false,
 ): DetectionAreaStatus {
   const requiredHistory = Number.isFinite(minimumHistorySeconds)
     ? Math.max(0, minimumHistorySeconds)
@@ -385,8 +564,7 @@ export function detectionAreaStatus(
     recordedHistory === Number.POSITIVE_INFINITY
       ? Number.POSITIVE_INFINITY
       : Math.max(0, recordedHistory ?? 0);
-  const included =
-    detection.panorama !== null && (insideCurrentFov || historySeconds >= requiredHistory);
+  const included = detection.panorama !== null && historySeconds >= requiredHistory;
   return {
     included,
     historySeconds,
