@@ -81,6 +81,8 @@
   const MAX_ROLL_DEGREES = 15;
   const LEVEL_ORIENTATION = { tilt: 0, roll: 0 };
   const NO_DETECTIONS: WebDetection[] = [];
+  const PLAYBACK_RATES = [1, 1.25, 1.5] as const;
+  type PlaybackRate = (typeof PLAYBACK_RATES)[number];
 
   interface PerspectiveFrame {
     enabled: boolean;
@@ -213,6 +215,7 @@
   let duration = 0;
   let playing = false;
   let muted = false;
+  let playbackRate: PlaybackRate = 1;
   let showDetections = false;
   let showPlaybackMarkers = false;
   let clockRequest = 0;
@@ -726,6 +729,7 @@
 
   function videoLoaded(): void {
     sourceAspect = videoElement.videoWidth / videoElement.videoHeight;
+    videoElement.playbackRate = playbackRate;
     duration = Number.isFinite(videoElement.duration) ? videoElement.duration : 0;
     const initialTime = Math.min(duration, Math.max(0, pendingInitialTime ?? 0));
     if (initialTime > 0) {
@@ -858,6 +862,34 @@
     }
     muted = !muted;
     videoElement.muted = muted;
+  }
+
+  function changePlaybackRate(nextRate: PlaybackRate, event: MouseEvent): void {
+    playbackRate = nextRate;
+    if (videoElement) videoElement.playbackRate = nextRate;
+    closeContainingMenu(event);
+  }
+
+  function closeContainingMenu(event: MouseEvent): void {
+    const control = (event.currentTarget as HTMLElement).closest('details');
+    if (control instanceof HTMLDetailsElement) control.open = false;
+  }
+
+  function toggleAutoCameraControls(event: MouseEvent): void {
+    autoControlsOpen = !autoControlsOpen;
+    if (autoControlsOpen) orientationControlsOpen = false;
+    closeContainingMenu(event);
+  }
+
+  function toggleOrientationControls(event: MouseEvent): void {
+    orientationControlsOpen = !orientationControlsOpen;
+    if (orientationControlsOpen) autoControlsOpen = false;
+    closeContainingMenu(event);
+  }
+
+  function saveViewerSettings(event: MouseEvent): void {
+    closeContainingMenu(event);
+    onSaveSettings?.();
   }
 
   function beginPan(event: PointerEvent): void {
@@ -1037,14 +1069,6 @@
       disableAutoCameraForManualControl();
     }
     perspectiveFov = clampFov(perspectiveFov * factor);
-    defaultPerspectiveFov = perspectiveFov;
-  }
-
-  function setFov(event: Event): void {
-    if (autoCameraEnabled) {
-      disableAutoCameraForManualControl();
-    }
-    perspectiveFov = clampFov(Number((event.currentTarget as HTMLInputElement).value));
     defaultPerspectiveFov = perspectiveFov;
   }
 
@@ -2067,6 +2091,26 @@
       <ChevronsRight size={17} aria-hidden="true" />
     </button>
 
+    <details class:disabled={!videoUrl} class="playback-speed-control">
+      <summary
+        class="icon-button playback-speed-summary"
+        aria-label={`Playback speed ${playbackRate}×`}
+        aria-disabled={!videoUrl}
+        title="Playback speed"
+        onclick={(event) => { if (!videoUrl) event.preventDefault(); }}
+      >{playbackRate}×</summary>
+      <div class="playback-speed-menu" aria-label="Playback speed">
+        {#each PLAYBACK_RATES as rate}
+          <button
+            class:active={playbackRate === rate}
+            type="button"
+            aria-pressed={playbackRate === rate}
+            onclick={(event) => changePlaybackRate(rate, event)}
+          >{rate}×</button>
+        {/each}
+      </div>
+    </details>
+
     <span class="timecode">{formatTime(currentTime)}</span>
     <input
       class="timeline"
@@ -2140,64 +2184,43 @@
           <input type="checkbox" bind:checked={showPlaybackMarkers} disabled={playbackMarkers.length === 0} />
           <span>Action markers</span>
         </label>
-      </div>
-    </details>
-
-    {#if perspectiveMode}
-      <div class="fov-controls" aria-label="Field of view controls">
-        <span class="control-label">FOV</span>
-        <input
-          class="fov-slider"
-          type="range"
-          min={MIN_FOV_DEGREES}
-          max={MAX_FOV_DEGREES}
-          step="1"
-          value={perspectiveFov}
-          aria-label="Vertical field of view"
-          oninput={setFov}
-        />
-        <output>{Math.round(perspectiveFov)}°</output>
+        <div class="view-options-divider" role="separator"></div>
         <button
-          class="icon-button"
+          class="view-option-action"
           class:active={autoControlsOpen}
           type="button"
-          aria-label="Automatic camera settings"
           aria-expanded={autoControlsOpen}
-          title="Automatic camera settings"
-          onclick={() => {
-            autoControlsOpen = !autoControlsOpen;
-            if (autoControlsOpen) orientationControlsOpen = false;
-          }}
+          disabled={!perspectiveMode}
+          onclick={toggleAutoCameraControls}
         >
-          <Gauge size={17} aria-hidden="true" />
+          <Gauge size={16} aria-hidden="true" />
+          <span>AutoCam settings</span>
         </button>
         <button
-          class="icon-button"
+          class="view-option-action"
           class:active={orientationControlsOpen}
           type="button"
-          aria-label="Camera tilt and roll"
           aria-expanded={orientationControlsOpen}
-          title="Camera tilt and roll"
-          onclick={() => {
-            orientationControlsOpen = !orientationControlsOpen;
-            if (orientationControlsOpen) autoControlsOpen = false;
-          }}
+          disabled={!perspectiveMode}
+          onclick={toggleOrientationControls}
         >
-          <Camera size={17} aria-hidden="true" />
+          <Camera size={16} aria-hidden="true" />
+          <span>Camera orientation</span>
         </button>
         {#if onSaveSettings}
           <button
-            class="icon-button"
+            class="view-option-action"
             type="button"
-            aria-label="Save viewer settings"
-            title="Save viewer settings"
-            onclick={onSaveSettings}
+            onclick={saveViewerSettings}
           >
-            <Save size={17} aria-hidden="true" />
+            <Save size={16} aria-hidden="true" />
+            <span>Save settings</span>
           </button>
         {/if}
       </div>
-    {:else}
+    </details>
+
+    {#if !perspectiveMode}
       <div class="zoom-controls" aria-label="Zoom controls">
         <button
           class="icon-button"

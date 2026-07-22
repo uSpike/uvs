@@ -40,6 +40,9 @@ describe('UVSVideoViewer', () => {
 
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
+    expect(result.body).toContain('Playback speed');
+    expect(result.body).toContain('1.25×');
+    expect(result.body).toContain('1.5×');
     expect(result.body).toContain('Turn on automatic camera');
     expect(result.body).toContain('Disable AutoCam on play');
     expect(result.body).toContain('AutoCam will turn on when playback resumes');
@@ -50,6 +53,18 @@ describe('UVSVideoViewer', () => {
 
     expect(result.body).not.toContain('Show video details');
     expect(result.body).not.toContain('Show frame, detection, and FOV details');
+    expect(result.body).not.toContain('Vertical field of view');
     expect(result.body).not.toContain('viewport-readout');
+  });
+
+  it('keeps camera and persistence controls in the view options menu', () => {
+    const result = render(UVSVideoViewer, {
+      props: { onSaveSettings: () => undefined },
+    });
+
+    expect(result.body).toContain('AutoCam settings');
+    expect(result.body).toContain('Camera orientation');
+    expect(result.body).toContain('Save settings');
+    expect(result.body).not.toContain('aria-label="Camera controls"');
   });
 });
