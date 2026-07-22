@@ -58,16 +58,37 @@
   }
 
   function keepPlayerEntryFocused(rosterId: number): SubmitFunction {
-    return () => async ({ result, update }) => {
-      await update({ reset: result.type === 'success' });
-      await tick();
-      document.getElementById(`player-name-${rosterId}`)?.focus();
+    return () => {
+      setPlayerManagerExpanded(rosterId, true);
+      return async ({ result, update }) => {
+        await update({ reset: result.type === 'success' });
+        setPlayerManagerExpanded(rosterId, true);
+        await tick();
+        document.getElementById(`player-name-${rosterId}`)?.focus();
+      };
     };
+  }
+
+  function addPlayerOnMatchupEnter(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || event.repeat || event.isComposing) return;
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement) || select.value === '') return;
+    event.preventDefault();
+    select.form?.requestSubmit();
   }
 
   function saveAttendanceInPlace(): SubmitFunction {
     return () => async ({ update }) => {
       await update({ reset: false });
+    };
+  }
+
+  function closeNewLineOnSuccess(panelId: string): SubmitFunction {
+    return () => async ({ result, update }) => {
+      await update({ reset: result.type === 'success' });
+      if (result.type !== 'success') return;
+      const panel = document.getElementById(panelId);
+      if (panel instanceof HTMLDetailsElement) panel.open = false;
     };
   }
 
@@ -260,7 +281,7 @@
           <form
             class="inline-form compact-form player-add-form"
             method="POST"
-            action="?/addPlayer"
+            action={`?/addPlayer&season=${roster.id}`}
             use:enhance={keepPlayerEntryFocused(roster.id)}
           >
             <input type="hidden" name="seasonRosterId" value={roster.id} />
@@ -277,7 +298,7 @@
             </label>
             <label>
               <span class="field-label">Role</span>
-              <select name="matchupRole" required>
+              <select name="matchupRole" required onkeydown={addPlayerOnMatchupEnter}>
                 <option value="" disabled selected>Choose</option>
                 <option value="mmp">MMP</option>
                 <option value="fmp">FMP</option>
@@ -811,9 +832,14 @@
                 </form>
               {/each}
 
-              <details class="new-line-panel">
+              <details id={`new-line-panel-${tournament.id}`} class="new-line-panel">
                 <summary class="secondary-command"><Plus size={14} />Add line</summary>
-                <form class="line-form new-line" method="POST" action="?/createLine" use:enhance={saveAttendanceInPlace()}>
+                <form
+                  class="line-form new-line"
+                  method="POST"
+                  action={`?/createLine&season=${roster.id}&section=events&tournament=${tournament.id}`}
+                  use:enhance={closeNewLineOnSuccess(`new-line-panel-${tournament.id}`)}
+                >
                   <input type="hidden" name="tournamentId" value={tournament.id} />
                   <label class="line-name">
                     <span class="field-label">New line name</span>

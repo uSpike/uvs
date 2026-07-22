@@ -1,6 +1,6 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
-  import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, Plus, Trash2, Unlock } from '@lucide/svelte';
+  import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, PanelRightClose, PanelRightOpen, Plus, Trash2, Unlock } from '@lucide/svelte';
   import type { MetadataTimeline } from '$lib/metadata';
   import {
     UVSVideoViewer,
@@ -12,7 +12,7 @@
   } from '$lib';
   import GameStatsRecorder from '$lib/GameStatsRecorder.svelte';
   import { gameEventLabel } from '$lib/game-events';
-  import { autoCameraEndzoneAtTime, gamePlaybackAnnotations, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
+  import { autoCameraEndzoneAtTime, calculateScoreAtTime, gamePlaybackAnnotations, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
   import type { UVSViewerPlaybackState } from '$lib';
 
   let { data, form } = $props();
@@ -31,6 +31,7 @@
   } | null>(null);
   let copiedShareId = $state<number | null>(null);
   let statsEditing = $state(false);
+  let statsPaneHidden = $state(false);
   let statsRecorder = $state<{
     toggleEditing: () => void;
     placeSpatialPoint: (point: UVSViewerSpatialPoint) => void;
@@ -58,6 +59,9 @@
     trackingSnapshot.data.points.map((point) => point.startTimeMs),
   );
   const actionPlaybackMarkers = $derived(buildActionPlaybackMarkers(trackingSnapshot));
+  const headerScore = $derived(
+    calculateScoreAtTime(trackingSnapshot.data, Math.round(viewerPlayback.currentTime * 1000)),
+  );
 
   const emptyPlayback: UVSViewerPlaybackState = {
     currentTime: 0,
@@ -161,14 +165,124 @@
       if (copiedShareId === id) copiedShareId = null;
     }, 1500);
   }
+
+  function hideStatsPane(): void {
+    if (statsEditing) statsRecorder?.toggleEditing();
+    statsPaneHidden = true;
+  }
 </script>
 
 <svelte:head>
   <title>{data.game.title} - Ultimate Video Stats</title>
 </svelte:head>
 
-<section class="game-page">
-  <div class="game-workspace" class:no-video={!data.game.hasVideo}>
+{#snippet shareControl()}
+  {#if data.game.hasVideo}
+    <details
+      class="share-control"
+      open={form?.action === 'createShareLink' || form?.action === 'deleteShareLink'}
+    >
+      <summary class="secondary-command compact">
+        <Link2 size={15} aria-hidden="true" />
+        Share
+      </summary>
+      <div class="share-popover">
+        <div class="share-heading">
+          <div>
+            <strong>Public video links</strong>
+            <small>Anyone with a link can watch video, without stats.</small>
+          </div>
+          <form method="POST" action="?/createShareLink">
+            <button class="primary-command compact" type="submit"><Plus size={14} />New link</button>
+          </form>
+        </div>
+        {#if form?.action === 'deleteShareLink' && form?.error}
+          <p class="share-error" role="alert">{form.error}</p>
+        {/if}
+        {#if data.shareLinks.length === 0}
+          <p class="empty-share-links">No active share links.</p>
+        {:else}
+          <ul>
+            {#each data.shareLinks as link}
+              <li>
+                <div>
+                  <code>{resolve(`/share/${link.token.slice(0, 10)}…`)}</code>
+                  <small>Created {new Date(link.createdAt).toLocaleString()}</small>
+                </div>
+                <button
+                  class="icon-command"
+                  type="button"
+                  aria-label="Copy share link"
+                  title={copiedShareId === link.id ? 'Copied' : 'Copy link'}
+                  onclick={() => copyShareLink(link.id, link.token)}
+                ><Copy size={14} /></button>
+                <a
+                  class="icon-command"
+                  href={resolve(`/share/${link.token}`)}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open share link"
+                  title="Open link"
+                ><ExternalLink size={14} /></a>
+                <form method="POST" action="?/deleteShareLink">
+                  <input type="hidden" name="shareLinkId" value={link.id} />
+                  <button class="icon-command revoke-link" type="submit" aria-label="Revoke share link" title="Revoke link">
+                    <Trash2 size={14} />
+                  </button>
+                </form>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </details>
+  {/if}
+{/snippet}
+
+<section class:stats-hidden={statsPaneHidden && data.game.hasVideo} class="game-page">
+  {#if statsPaneHidden && data.game.hasVideo}
+    <header class="game-header minimized-game-header">
+      <div class="game-identity">
+        {#if data.role === 'player' || data.role === 'admin'}
+          <a
+            class="icon-command"
+            href={resolve(`/teams/${data.game.teamSlug}`)}
+            aria-label={`Back to ${data.game.teamName}`}
+            title={`Back to ${data.game.teamName}`}
+          ><ArrowLeft size={17} aria-hidden="true" /></a>
+        {/if}
+        <div>
+          <h1>{data.game.title}</h1>
+          <span>{data.game.teamName} vs {trackingSnapshot.data.game.opponentName}</span>
+        </div>
+      </div>
+      <div class="minimized-score" aria-label={`${data.game.teamName} ${headerScore.ourScore}, ${trackingSnapshot.data.game.opponentName} ${headerScore.opponentScore}`}>
+        <span>{data.game.teamName}</span>
+        <strong>{headerScore.ourScore}</strong>
+        <b>–</b>
+        <strong>{headerScore.opponentScore}</strong>
+        <span>{trackingSnapshot.data.game.opponentName}</span>
+      </div>
+      <div class="header-actions">
+        {#if data.role === 'player' || data.role === 'admin'}
+          <a
+            class="secondary-command compact stats-page-command"
+            href={resolve(`/teams/${trackingSnapshot.data.game.teamSlug}/tournaments/${trackingSnapshot.data.game.tournamentId}?game=${trackingSnapshot.data.game.token}#game-${trackingSnapshot.data.game.token}`)}
+            title="View game and event statistics"
+          ><BarChart3 size={14} aria-hidden="true" />Stats</a>
+        {/if}
+        {@render shareControl()}
+        <button
+          class="icon-command stats-pane-toggle"
+          type="button"
+          aria-label="Show live statistics"
+          title="Show live statistics"
+          onclick={() => statsPaneHidden = false}
+        ><PanelRightOpen size={17} aria-hidden="true" /></button>
+      </div>
+    </header>
+  {/if}
+  <div class:stats-pane-hidden={statsPaneHidden && data.game.hasVideo} class="game-workspace" class:no-video={!data.game.hasVideo}>
     {#if data.game.hasVideo}
     <div class="game-viewer-pane">
       {#if source}
@@ -202,7 +316,7 @@
       {/if}
     </div>
     {/if}
-    <div class="game-stats-pane">
+    <div class:visually-hidden-pane={statsPaneHidden && data.game.hasVideo} class="game-stats-pane">
       <header class="game-header">
         <div class="game-identity">
           {#if data.role === 'player' || data.role === 'admin'}
@@ -240,66 +354,7 @@
               {#if statsEditing}<Unlock size={14} aria-hidden="true" />Editing{:else}<Edit3 size={14} aria-hidden="true" />Edit stats{/if}
             </button>
           {/if}
-          {#if data.game.hasVideo}
-            <details
-              class="share-control"
-              open={form?.action === 'createShareLink' || form?.action === 'deleteShareLink'}
-            >
-              <summary class="secondary-command compact">
-                <Link2 size={15} aria-hidden="true" />
-                Share
-              </summary>
-              <div class="share-popover">
-                <div class="share-heading">
-                  <div>
-                    <strong>Public video links</strong>
-                    <small>Anyone with a link can watch video, without stats.</small>
-                  </div>
-                  <form method="POST" action="?/createShareLink">
-                    <button class="primary-command compact" type="submit"><Plus size={14} />New link</button>
-                  </form>
-                </div>
-                {#if form?.action === 'deleteShareLink' && form?.error}
-                  <p class="share-error" role="alert">{form.error}</p>
-                {/if}
-                {#if data.shareLinks.length === 0}
-                  <p class="empty-share-links">No active share links.</p>
-                {:else}
-                  <ul>
-                    {#each data.shareLinks as link}
-                      <li>
-                        <div>
-                          <code>{resolve(`/share/${link.token.slice(0, 10)}…`)}</code>
-                          <small>Created {new Date(link.createdAt).toLocaleString()}</small>
-                        </div>
-                        <button
-                          class="icon-command"
-                          type="button"
-                          aria-label="Copy share link"
-                          title={copiedShareId === link.id ? 'Copied' : 'Copy link'}
-                          onclick={() => copyShareLink(link.id, link.token)}
-                        ><Copy size={14} /></button>
-                        <a
-                          class="icon-command"
-                          href={resolve(`/share/${link.token}`)}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label="Open share link"
-                          title="Open link"
-                        ><ExternalLink size={14} /></a>
-                        <form method="POST" action="?/deleteShareLink">
-                          <input type="hidden" name="shareLinkId" value={link.id} />
-                          <button class="icon-command revoke-link" type="submit" aria-label="Revoke share link" title="Revoke link">
-                            <Trash2 size={14} />
-                          </button>
-                        </form>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-            </details>
-          {/if}
+          {@render shareControl()}
 
           {#if data.role === 'admin' && data.game.hasVideo}
             <div class="settings-actions">
@@ -312,6 +367,15 @@
             <form class="viewer-settings-save-form" method="POST" action="?/saveSettings" bind:this={settingsSaveForm}>
               <input type="hidden" name="settings" value={settingsJson} />
             </form>
+          {/if}
+          {#if data.game.hasVideo}
+            <button
+              class="icon-command stats-pane-toggle"
+              type="button"
+              aria-label="Hide live statistics"
+              title="Hide live statistics"
+              onclick={hideStatsPane}
+            ><PanelRightClose size={17} aria-hidden="true" /></button>
           {/if}
         </div>
       </header>
@@ -351,6 +415,10 @@
     background: #111210;
   }
 
+  .game-page.stats-hidden {
+    grid-template-rows: 54px minmax(0, 1fr);
+  }
+
   .game-header {
     z-index: 8;
     display: flex;
@@ -364,6 +432,39 @@
     color: #edf1eb;
     background: #1b1d1a;
   }
+
+  .minimized-game-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    border-left: 0;
+  }
+
+  .minimized-game-header .header-actions {
+    justify-self: end;
+  }
+
+  .minimized-score {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .minimized-score span {
+    max-width: 130px;
+    overflow: hidden;
+    color: #aeb6ab;
+    font-size: 10px;
+    font-weight: 680;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .minimized-score span:first-child { text-align: right; }
+  .minimized-score strong { color: #fff; font-size: 20px; line-height: 1; }
+  .minimized-score b { color: #747c72; font-size: 13px; }
 
   .game-identity,
   .header-actions,
@@ -381,6 +482,7 @@
   .viewer-settings-save-form { display: none; }
 
   .header-actions { position: relative; }
+  .stats-pane-toggle { flex: 0 0 auto; }
   .stats-page-command { border-color:#4b5148; color:#e0e5dd; background:#292d27; text-decoration:none; }
   .stats-page-command:hover { border-color:#626a60; color:#fff; background:#343932; }
   .stats-edit-command { border-color:#4b5148; color:#e0e5dd; background:#292d27; }
@@ -517,6 +619,8 @@
     min-height: 0;
   }
 
+  .game-workspace.stats-pane-hidden { grid-template-columns: minmax(0, 1fr); }
+
   .game-workspace.no-video { grid-template-columns: minmax(0, 1fr); }
 
   .game-stats-pane {
@@ -525,6 +629,8 @@
     min-width: 0;
     min-height: 0;
   }
+
+  .game-stats-pane.visually-hidden-pane { display: none; }
 
   .viewer-state {
     position: absolute;
@@ -544,12 +650,27 @@
     .settings-message {
       display: none;
     }
+
+    .minimized-game-header {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      padding-inline: 8px;
+    }
+
+    .minimized-game-header .game-identity span,
+    .minimized-score span {
+      display: none;
+    }
   }
 
   @media (max-width: 900px) {
     .game-workspace {
       grid-template-columns: 1fr;
       grid-template-rows: minmax(260px, 58%) minmax(220px, 42%);
+    }
+
+    .game-workspace.stats-pane-hidden {
+      grid-template-rows: minmax(0, 1fr);
     }
 
     .game-header { border-left: 0; }
