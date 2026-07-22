@@ -1,4 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { parseMetadataJsonl } from '$lib/metadata';
 import { parseMatchupRole } from '$lib/matchup';
 import { CatalogRepository } from '$lib/server/catalog';
@@ -56,7 +57,7 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
 
 export const actions: Actions = {
   updateTeamPassword: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       const password = String(form.get('password') ?? '');
@@ -72,7 +73,7 @@ export const actions: Actions = {
   },
 
   createGame: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     const values = {
       tournamentId: Number(form.get('tournamentId')),
@@ -130,11 +131,11 @@ export const actions: Actions = {
         values,
       });
     }
-    redirect(303, `/games/${gameToken}`);
+    redirect(303, resolve(`/games/${gameToken}`));
   },
 
   deleteGame: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       const token = String(form.get('gameToken') ?? '');
@@ -149,7 +150,7 @@ export const actions: Actions = {
   },
 
   createRoster: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     let rosterId: number;
     try {
@@ -160,11 +161,11 @@ export const actions: Actions = {
     } catch (caught) {
       return failure('createRoster', caught);
     }
-    redirect(303, `/admin/teams/${params.slug}?season=${rosterId}`);
+    redirect(303, resolve(`/admin/teams/${params.slug}?season=${rosterId}`));
   },
 
   renameRoster: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().renameSeasonRoster(
@@ -178,7 +179,7 @@ export const actions: Actions = {
   },
 
   deleteRoster: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().deleteSeasonRoster(
@@ -191,7 +192,7 @@ export const actions: Actions = {
   },
 
   addPlayer: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().addPlayer(
@@ -206,7 +207,7 @@ export const actions: Actions = {
   },
 
   renamePlayer: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().updatePlayer(
@@ -221,7 +222,7 @@ export const actions: Actions = {
   },
 
   deletePlayer: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().deletePlayer(positiveInteger(form.get('playerId'), 'Player'));
@@ -232,7 +233,7 @@ export const actions: Actions = {
   },
 
   addStrategy: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().addStrategy(
@@ -248,7 +249,7 @@ export const actions: Actions = {
   },
 
   updateStrategy: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().updateStrategy(
@@ -263,7 +264,7 @@ export const actions: Actions = {
   },
 
   deleteStrategy: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().deleteStrategy(
@@ -276,7 +277,7 @@ export const actions: Actions = {
   },
 
   createTournament: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     let seasonRosterId: number;
     let tournamentId: number;
@@ -298,11 +299,11 @@ export const actions: Actions = {
     } catch (caught) {
       return failure('createTournament', caught);
     }
-    redirect(303, `/admin/teams/${params.slug}?season=${seasonRosterId}&tournament=${tournamentId}`);
+    redirect(303, resolve(`/admin/teams/${params.slug}?season=${seasonRosterId}&tournament=${tournamentId}`));
   },
 
   renameTournament: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().renameTournament(
@@ -316,7 +317,7 @@ export const actions: Actions = {
   },
 
   deleteTournament: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().deleteTournament(
@@ -329,7 +330,7 @@ export const actions: Actions = {
   },
 
   saveTournamentRoster: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().updateTournamentPlayers(
@@ -343,7 +344,7 @@ export const actions: Actions = {
   },
 
   createLine: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().createLine(
@@ -358,7 +359,7 @@ export const actions: Actions = {
   },
 
   updateLine: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().updateLine(
@@ -373,7 +374,7 @@ export const actions: Actions = {
   },
 
   deleteLine: async ({ request, locals, params }) => {
-    requireAdmin(locals.role, `/admin/teams/${params.slug}`);
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
     try {
       new TournamentRepository().deleteLine(positiveInteger(form.get('lineId'), 'Line'));
@@ -414,5 +415,7 @@ function failure(action: string, caught: unknown) {
 }
 
 function requireAdmin(role: App.Locals['role'], next: string): void {
-  if (role !== 'admin') redirect(303, `/login?next=${encodeURIComponent(next)}`);
+  if (role !== 'admin') {
+    redirect(303, `${resolve('/login')}?next=${encodeURIComponent(next)}`);
+  }
 }

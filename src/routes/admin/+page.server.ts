@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { CatalogRepository } from '$lib/server/catalog';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -29,7 +30,7 @@ export const actions: Actions = {
 
 function requireAdmin(role: App.Locals['role']): void {
   if (role !== 'admin') {
-    redirect(303, '/login?next=/admin');
+    redirect(303, `${resolve('/login')}?next=${encodeURIComponent(resolve('/admin'))}`);
   }
 }
 

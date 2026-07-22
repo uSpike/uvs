@@ -1,8 +1,8 @@
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = ({ locals, url }) => ({
+export const load: LayoutServerLoad = ({ locals, route }) => ({
   role: locals.role,
   teamSlug: locals.teamSlug,
-  fullBleed: /^\/(?:games|share)\/[^/]+\/?$/u.test(url.pathname),
-  pageScroll: /^\/teams\/[^/]+\/tournaments\/[^/]+\/?$/u.test(url.pathname),
+  fullBleed: route.id === '/games/[token]' || route.id === '/share/[token]',
+  pageScroll: route.id === '/teams/[slug]/tournaments/[id]',
 });

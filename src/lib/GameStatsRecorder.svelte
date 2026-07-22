@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { resolve } from '$app/paths';
   import {
     AlertTriangle,
     Check,
@@ -250,7 +251,7 @@
     lockError = '';
     lockHeldElsewhere = false;
     try {
-      const response = await fetch(`/api/games/${token}/edit-lock`, {
+      const response = await fetch(resolve(`/api/games/${token}/edit-lock`), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ownerId, takeover }),
@@ -278,7 +279,7 @@
 
   async function refreshSnapshotForEditing(): Promise<void> {
     try {
-      const response = await fetch(`/api/games/${token}/stats`, { cache: 'no-store' });
+      const response = await fetch(resolve(`/api/games/${token}/stats`), { cache: 'no-store' });
       if (!response.ok) return;
       snapshot = await response.json() as GameTrackingSnapshot;
       onSnapshotChange(snapshot);
@@ -300,7 +301,7 @@
     void (async () => {
       try {
         const response = await fetch(
-          `/api/games/${token}/edit-lock/presence?token=${encodeURIComponent(tokenValue)}`,
+          resolve(`/api/games/${token}/edit-lock/presence?token=${encodeURIComponent(tokenValue)}`),
           { signal: controller.signal, cache: 'no-store' },
         );
         if (!response.ok || !response.body) throw new Error('The editing connection could not be opened.');
@@ -348,7 +349,7 @@
     presenceAbort?.abort();
     presenceAbort = null;
     if (releasedToken) {
-      void fetch(`/api/games/${token}/edit-lock`, {
+      void fetch(resolve(`/api/games/${token}/edit-lock`), {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ token: releasedToken }),
@@ -370,7 +371,7 @@
     saving = true;
     mutationError = '';
     try {
-      const response = await fetch(`/api/games/${token}/stats`, {
+      const response = await fetch(resolve(`/api/games/${token}/stats`), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

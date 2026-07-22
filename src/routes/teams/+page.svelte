@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ChevronRight, Users } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
 
   let { data } = $props();
 </script>
@@ -22,7 +23,7 @@
   {:else}
     <div class="team-list">
       {#each data.teams as team}
-        <a class="team-row" href={`/teams/${team.slug}`}>
+        <a class="team-row" href={resolve(`/teams/${team.slug}`)}>
           <span class="team-icon"><Users size={18} aria-hidden="true" /></span>
           <span class="team-name">{team.name}</span>
           <span class="game-count">{team.gameCount} {team.gameCount === 1 ? 'game' : 'games'}</span>

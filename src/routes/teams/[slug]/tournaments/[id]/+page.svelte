@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowLeft, BarChart3, ChevronDown, ClipboardList, ExternalLink, Play } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
 
   let { data } = $props();
@@ -30,7 +31,7 @@
     <header><h2>Players</h2><span>Scoring pass counts as a completion and reception</span></header>
     <div class="table-scroll"><table><thead><tr><th>Player</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.receptions}>R</th><th title={statHelp.turnovers}>T</th><th title={statHelp.goals}>G</th><th title={statHelp.assists}>A</th><th title={statHelp.hockeyAssists}>2A</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.pulls}>Pulls</th><th title={statHelp.plusMinus}>+/-</th><th title={statHelp.discTime}>Disc</th></tr></thead><tbody>
       {#each statistics.playerStatistics as stats}
-        <tr><th><a href={`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`}>{stats.playerName}</a></th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.receptions}</td><td>{stats.turnovers}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.pulls}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{duration(stats.timeWithDiscMs)}</td></tr>
+        <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`)}>{stats.playerName}</a></th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.receptions}</td><td>{stats.turnovers}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.pulls}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{duration(stats.timeWithDiscMs)}</td></tr>
       {/each}
     </tbody></table></div>
   </section>
@@ -48,7 +49,7 @@
 <svelte:head><title>{data.tournament.name} stats - Ultimate Video Stats</title></svelte:head>
 
 <div class="stats-page">
-  <a class="back-link" href={`/teams/${data.tournament.teamSlug}`}><ArrowLeft size={15} />{data.tournament.teamName}</a>
+  <a class="back-link" href={resolve(`/teams/${data.tournament.teamSlug}`)}><ArrowLeft size={15} />{data.tournament.teamName}</a>
   <header class="stats-heading">
     <div><h1>{data.tournament.name}</h1><p>{data.tournament.seasonRosterName} · {data.games.length} {data.games.length === 1 ? 'game' : 'games'}</p></div>
     <BarChart3 size={24} aria-hidden="true" />
@@ -73,7 +74,7 @@
           <div class="game-breakdown">
             <div class="game-breakdown-actions">
               <span>Game statistics</span>
-              <a href={`/games/${game.token}`}>{game.hasVideo ? 'Open video and editor' : 'Open game editor'}<ExternalLink size={13} aria-hidden="true" /></a>
+              <a href={resolve(`/games/${game.token}`)}>{game.hasVideo ? 'Open video and editor' : 'Open game editor'}<ExternalLink size={13} aria-hidden="true" /></a>
             </div>
             {#if game.statistics}
               {#if game.statistics.coverage.paperPlayerGames > 0 || game.statistics.coverage.paperPointGames > 0}

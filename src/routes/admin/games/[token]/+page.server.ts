@@ -1,4 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { parseGameViewerSettings } from '$lib/game-settings';
 import { parseMetadataJsonl, type MetadataTimeline } from '$lib/metadata';
 import { CatalogRepository } from '$lib/server/catalog';
@@ -50,7 +51,7 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
 
 export const actions: Actions = {
   saveGame: async ({ request, params, locals }) => {
-    requireAdmin(locals.role, `/admin/games/${params.token}`);
+    requireAdmin(locals.role, resolve(`/admin/games/${params.token}`));
     const form = await request.formData();
     const values = submittedValues(form);
 
@@ -146,7 +147,7 @@ export const actions: Actions = {
   },
 
   resetSettings: ({ params, locals }) => {
-    requireAdmin(locals.role, `/admin/games/${params.token}`);
+    requireAdmin(locals.role, resolve(`/admin/games/${params.token}`));
     if (!new CatalogRepository().resetGameSettings(params.token)) {
       error(404, 'Game not found.');
     }
@@ -154,12 +155,12 @@ export const actions: Actions = {
   },
 
   deleteGame: ({ params, locals }) => {
-    requireAdmin(locals.role, `/admin/games/${params.token}`);
+    requireAdmin(locals.role, resolve(`/admin/games/${params.token}`));
     const catalog = new CatalogRepository();
     const game = catalog.getGameViewByToken(params.token);
     if (!game) error(404, 'Game not found.');
     if (!catalog.deleteGame(params.token)) error(404, 'Game not found.');
-    redirect(303, `/admin/teams/${game.teamSlug}`);
+    redirect(303, resolve(`/admin/teams/${game.teamSlug}`));
   },
 
 };
@@ -220,7 +221,7 @@ function requiredWholeNumber(value: string, name: string): number {
 
 function requireAdmin(role: App.Locals['role'], next: string): void {
   if (role !== 'admin') {
-    redirect(303, `/login?next=${encodeURIComponent(next)}`);
+    redirect(303, `${resolve('/login')}?next=${encodeURIComponent(next)}`);
   }
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowLeft, UserRound } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
 
   let { data } = $props();
@@ -13,7 +14,7 @@
 <svelte:head><title>{data.player.name} stats - Ultimate Video Stats</title></svelte:head>
 
 <div class="player-page">
-  <a class="back-link" href={`/teams/${data.team.slug}`}><ArrowLeft size={15} />{data.team.name}</a>
+  <a class="back-link" href={resolve(`/teams/${data.team.slug}`)}><ArrowLeft size={15} />{data.team.name}</a>
   <header class="player-heading"><span><UserRound size={23} /></span><div><h1>{data.player.name}</h1><p>{data.roster.name} · {data.player.matchupRole?.toUpperCase() ?? 'matchup role not set'}</p></div></header>
 
   {#if data.coverage.paperPlayerGames > 0 || data.coverage.paperPointGames > 0}
@@ -35,14 +36,14 @@
   <section class="data-section">
     <header><h2>Events</h2></header>
     <div class="table-scroll"><table><thead><tr><th>Event</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.receptions}>R</th><th title={statHelp.turnovers}>T</th><th title={statHelp.goals}>G</th><th title={statHelp.assists}>A</th><th title={statHelp.hockeyAssists}>2A</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.plusMinus}>+/-</th><th title={statHelp.discTime}>Disc</th></tr></thead><tbody>
-      {#each data.tournaments as tournament}<tr><th><a href={`/teams/${data.team.slug}/tournaments/${tournament.id}`}>{tournament.name}</a></th><td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{tournament.statistics.receptions}</td><td>{tournament.statistics.turnovers}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td></tr>{/each}
+      {#each data.tournaments as tournament}<tr><th><a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>{tournament.name}</a></th><td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{tournament.statistics.receptions}</td><td>{tournament.statistics.turnovers}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td></tr>{/each}
     </tbody></table></div>
   </section>
 
   <section class="data-section">
     <header><h2>Games</h2></header>
     <div class="table-scroll"><table><thead><tr><th>Game</th><th title={statHelp.score}>Score</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.completions}>C</th><th title={statHelp.receptions}>R</th><th title={statHelp.turnovers}>T</th><th title={statHelp.goals}>G</th><th title={statHelp.assists}>A</th><th title={statHelp.hockeyAssists}>2A</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.plusMinus}>+/-</th><th title={statHelp.discTime}>Disc</th></tr></thead><tbody>
-      {#each data.games as game}<tr><th><a href={`/games/${game.token}`}>{game.title}</a><small>vs {game.opponentName}</small></th><td>{game.ourScore}–{game.opponentScore}</td><td>{duration(game.statistics.timePlayedMs)}</td><td>{game.statistics.pointsPlayed}</td><td>{game.statistics.completions}</td><td>{game.statistics.receptions}</td><td>{game.statistics.turnovers}</td><td>{game.statistics.goals}</td><td>{game.statistics.assists}</td><td>{game.statistics.hockeyAssists}</td><td>{game.statistics.blocks}</td><td>{game.statistics.plusMinus > 0 ? '+' : ''}{game.statistics.plusMinus}</td><td>{duration(game.statistics.timeWithDiscMs)}</td></tr>{/each}
+      {#each data.games as game}<tr><th><a href={resolve(`/games/${game.token}`)}>{game.title}</a><small>vs {game.opponentName}</small></th><td>{game.ourScore}–{game.opponentScore}</td><td>{duration(game.statistics.timePlayedMs)}</td><td>{game.statistics.pointsPlayed}</td><td>{game.statistics.completions}</td><td>{game.statistics.receptions}</td><td>{game.statistics.turnovers}</td><td>{game.statistics.goals}</td><td>{game.statistics.assists}</td><td>{game.statistics.hockeyAssists}</td><td>{game.statistics.blocks}</td><td>{game.statistics.plusMinus > 0 ? '+' : ''}{game.statistics.plusMinus}</td><td>{duration(game.statistics.timeWithDiscMs)}</td></tr>{/each}
     </tbody></table></div>
   </section>
 </div>

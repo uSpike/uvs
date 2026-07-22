@@ -5,5 +5,9 @@ export default {
   preprocess: vitePreprocess(),
   kit: {
     adapter: adapter(),
+    paths: {
+      base: '/frisbee',
+      relative: false,
+    },
   },
 };

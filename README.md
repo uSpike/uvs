@@ -12,6 +12,10 @@ npm install
 npm run dev
 ```
 
+The application is configured for the `/frisbee` base path, so the development
+URL is `http://localhost:5173/frisbee/`. Internal links, redirects, assets, and
+API requests use SvelteKit's path resolver and retain that prefix.
+
 The development administrator password is `admin`. Production requires
 `ADMIN_PASSWORD` and `SESSION_SECRET`; see `.env.example`. Administrators set a
 shared, hashed player password when creating each team. The database defaults
@@ -20,6 +24,9 @@ Existing installations continue to discover the previous database environment
 setting and default filename so the branding change does not hide stored data.
 
 ## Access and data
+
+The route names below are application-relative; deployed URLs are prefixed with
+`/frisbee`.
 
 - `/admin` requires the global administrator password and manages teams.
 - `/admin/teams/:slug` manages season players, tournament attendance,
@@ -150,6 +157,7 @@ playback, panorama projection, overlays, and camera controls.
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { resolve } from '$app/paths';
   import {
     UVSVideoViewer,
     type MetadataTimeline,
@@ -160,9 +168,9 @@ playback, panorama projection, overlays, and camera controls.
   let source: UVSVideoViewerSource | null = null;
 
   async function loadGame(): Promise<void> {
-    const response = await fetch('/api/games/game-token/metadata');
+    const response = await fetch(resolve('/api/games/game-token/metadata'));
     source = {
-      videoUrl: '/api/games/game-token/video',
+      videoUrl: resolve('/api/games/game-token/video'),
       metadata: (await response.json()) as MetadataTimeline,
       videoName: 'Game 42',
       metadataName: 'Game 42 metadata',

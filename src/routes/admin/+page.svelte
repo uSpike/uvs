@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ChevronRight, FolderPlus, Plus, Settings, Shield } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
 
   let { data, form } = $props();
 </script>
@@ -75,7 +76,7 @@
     {:else}
       <div class="team-card-grid">
         {#each data.teams as team}
-          <a class="team-card" href={`/admin/teams/${team.slug}`}>
+          <a class="team-card" href={resolve(`/admin/teams/${team.slug}`)}>
             <span class="team-card-icon"><Settings size={18} aria-hidden="true" /></span>
             <span class="team-card-copy">
               <strong>{team.name}</strong>

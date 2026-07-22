@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, Plus, Trash2, Unlock } from '@lucide/svelte';
   import type { MetadataTimeline } from '$lib/metadata';
   import {
@@ -149,7 +150,7 @@
   }
 
   async function copyShareLink(id: number, token: string): Promise<void> {
-    const shareUrl = new URL(`/share/${token}`, window.location.origin).href;
+    const shareUrl = new URL(resolve(`/share/${token}`), window.location.origin).href;
     try {
       await navigator.clipboard.writeText(shareUrl);
     } catch {
@@ -207,7 +208,7 @@
           {#if data.role === 'player' || data.role === 'admin'}
             <a
               class="icon-command"
-              href={`/teams/${data.game.teamSlug}`}
+              href={resolve(`/teams/${data.game.teamSlug}`)}
               aria-label={`Back to ${data.game.teamName}`}
               title={`Back to ${data.game.teamName}`}
             >
@@ -224,7 +225,7 @@
           {#if data.role === 'player' || data.role === 'admin'}
             <a
               class="secondary-command compact stats-page-command"
-              href={`/teams/${trackingSnapshot.data.game.teamSlug}/tournaments/${trackingSnapshot.data.game.tournamentId}?game=${trackingSnapshot.data.game.token}#game-${trackingSnapshot.data.game.token}`}
+              href={resolve(`/teams/${trackingSnapshot.data.game.teamSlug}/tournaments/${trackingSnapshot.data.game.tournamentId}?game=${trackingSnapshot.data.game.token}#game-${trackingSnapshot.data.game.token}`)}
               title="View game and event statistics"
             ><BarChart3 size={14} aria-hidden="true" />Stats</a>
           {/if}
@@ -268,7 +269,7 @@
                     {#each data.shareLinks as link}
                       <li>
                         <div>
-                          <code>/share/{link.token.slice(0, 10)}…</code>
+                          <code>{resolve(`/share/${link.token.slice(0, 10)}…`)}</code>
                           <small>Created {new Date(link.createdAt).toLocaleString()}</small>
                         </div>
                         <button
@@ -280,7 +281,7 @@
                         ><Copy size={14} /></button>
                         <a
                           class="icon-command"
-                          href={`/share/${link.token}`}
+                          href={resolve(`/share/${link.token}`)}
                           target="_blank"
                           rel="noreferrer"
                           aria-label="Open share link"
@@ -319,7 +320,7 @@
         token={data.game.token}
         initialSnapshot={data.tracking}
         playback={viewerPlayback}
-        manageTournamentUrl={data.role === 'admin' ? `/admin/teams/${data.game.teamSlug}` : null}
+        manageTournamentUrl={data.role === 'admin' ? resolve(`/admin/teams/${data.game.teamSlug}`) : null}
         getPlayback={() => viewer?.getPlaybackState() ?? emptyPlayback}
         pausePlayback={() => viewer?.pause()}
         playPlayback={() => viewer?.play() ?? Promise.resolve()}

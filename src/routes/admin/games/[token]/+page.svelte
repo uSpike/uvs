@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import {
     ArrowLeft,
     Download,
@@ -31,7 +32,7 @@
 <div class="game-editor-page">
   <header class="editor-header">
     <div class="editor-identity">
-      <a class="icon-command" href={`/admin/teams/${data.game.teamSlug}`} aria-label={`Back to ${data.game.teamName} administration`} title="Back">
+      <a class="icon-command" href={resolve(`/admin/teams/${data.game.teamSlug}`)} aria-label={`Back to ${data.game.teamName} administration`} title="Back">
         <ArrowLeft size={17} aria-hidden="true" />
       </a>
       <div>
@@ -59,7 +60,7 @@
           Reset viewer defaults
         </button>
       </form>
-      <a class="secondary-command" href={`/games/${data.game.token}`}>
+      <a class="secondary-command" href={resolve(`/games/${data.game.token}`)}>
         <ExternalLink size={15} aria-hidden="true" />
         View game
       </a>
@@ -194,7 +195,7 @@
         <div class="section-actions">
           <a
             class="icon-command"
-            href={`/api/games/${data.game.token}/metadata`}
+            href={resolve(`/api/games/${data.game.token}/metadata`)}
             target="_blank"
             rel="noreferrer"
             aria-label="View parsed metadata"
@@ -204,7 +205,7 @@
           </a>
           <a
             class="icon-command"
-            href={`/admin/games/${data.game.token}/metadata`}
+            href={resolve(`/admin/games/${data.game.token}/metadata`)}
             aria-label="Download original metadata JSONL"
             title="Download original JSONL"
           >

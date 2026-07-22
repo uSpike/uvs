@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { resolve } from '$app/paths';
   import { ArrowLeft, CalendarDays, ExternalLink, FileJson, KeyRound, Pencil, Plus, Save, Trash2, Users, X } from '@lucide/svelte';
   import { tick } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -97,7 +98,7 @@
 
 <div class="setup-page">
   <header class="setup-header">
-    <a class="icon-command" href="/admin" aria-label="Back to administration">
+    <a class="icon-command" href={resolve('/admin')} aria-label="Back to administration">
       <ArrowLeft size={17} aria-hidden="true" />
     </a>
     <div>
@@ -107,8 +108,8 @@
   </header>
 
   <nav class="admin-tabs" aria-label="Team administration">
-    <a class:active={data.activeTab === 'setup'} href={`/admin/teams/${data.setup.slug}`} aria-current={data.activeTab === 'setup' ? 'page' : undefined}>Seasons</a>
-    <a class:active={data.activeTab === 'access'} href={`/admin/teams/${data.setup.slug}?tab=access`} aria-current={data.activeTab === 'access' ? 'page' : undefined}>Access</a>
+    <a class:active={data.activeTab === 'setup'} href={resolve(`/admin/teams/${data.setup.slug}`)} aria-current={data.activeTab === 'setup' ? 'page' : undefined}>Seasons</a>
+    <a class:active={data.activeTab === 'access'} href={resolve(`/admin/teams/${data.setup.slug}?tab=access`)} aria-current={data.activeTab === 'access' ? 'page' : undefined}>Access</a>
   </nav>
 
   {#if form?.error}
@@ -149,11 +150,11 @@
       {#each data.setup.rosters as roster}
         <a
           class:active={data.setupView !== 'new-season' && data.selectedSeasonId === roster.id}
-          href={`/admin/teams/${data.setup.slug}?season=${roster.id}`}
+          href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}`)}
           aria-current={data.setupView !== 'new-season' && data.selectedSeasonId === roster.id ? 'page' : undefined}
         >{roster.name}</a>
       {/each}
-      <a class="new-season-tab" class:active={data.setupView === 'new-season'} href={`/admin/teams/${data.setup.slug}?view=new-season`}><Plus size={13} />New season</a>
+      <a class="new-season-tab" class:active={data.setupView === 'new-season'} href={resolve(`/admin/teams/${data.setup.slug}?view=new-season`)}><Plus size={13} />New season</a>
     </nav>
 
     {#if data.setupView === 'new-season'}
@@ -180,15 +181,15 @@
     <div class="season-admin-layout">
       <aside class="season-navigation">
         <nav aria-label={`${roster.name} administration`}>
-          <a class:active={data.seasonSection === 'players'} href={`/admin/teams/${data.setup.slug}?season=${roster.id}`}>
+          <a class:active={data.seasonSection === 'players'} href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}`)}>
             <span>Players</span>
             <small>{roster.players.length} {roster.players.length === 1 ? 'player' : 'players'}</small>
           </a>
-          <a class:active={data.seasonSection === 'strategies'} href={`/admin/teams/${data.setup.slug}?season=${roster.id}&section=strategies`}>
+          <a class:active={data.seasonSection === 'strategies'} href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}&section=strategies`)}>
             <span>Strategies</span>
             <small>{roster.strategies.length}</small>
           </a>
-          <a class:active={data.seasonSection === 'events'} href={`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events`}>
+          <a class:active={data.seasonSection === 'events'} href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events`)}>
             <span>Events</span>
             <small>{rosterTournamentCount}</small>
           </a>
@@ -483,12 +484,12 @@
       {:else}
         <nav class="event-tabs" aria-label={`${roster.name} events`}>
           {#each data.setup.tournaments.filter((tournament) => tournament.seasonRosterId === roster.id) as tournament}
-            <a class:active={data.setupView === 'tournament' && data.selectedTournamentId === tournament.id} href={`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&tournament=${tournament.id}`}>
+            <a class:active={data.setupView === 'tournament' && data.selectedTournamentId === tournament.id} href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&tournament=${tournament.id}`)}>
               <span>{tournament.name}</span>
               <small>{tournament.gameCount} {tournament.gameCount === 1 ? 'game' : 'games'}</small>
             </a>
           {/each}
-          <a class="new-event-tab" class:active={data.setupView === 'new-tournament'} href={`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&view=new-tournament`}><Plus size={13} />New event</a>
+          <a class="new-event-tab" class:active={data.setupView === 'new-tournament'} href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&view=new-tournament`)}><Plus size={13} />New event</a>
         </nav>
       {#if data.setupView === 'new-tournament'}
         <section class="season-panel focused-create-card">
@@ -574,7 +575,7 @@
               </p>
             </div>
             <div class="tournament-header-actions">
-              <a class="secondary-command" href={`/teams/${data.setup.slug}/tournaments/${tournament.id}`}>View stats</a>
+              <a class="secondary-command" href={resolve(`/teams/${data.setup.slug}/tournaments/${tournament.id}`)}>View stats</a>
               <form
                 method="POST"
                 action="?/deleteTournament"
@@ -600,7 +601,7 @@
               <ul class="game-link-list">
                 {#each tournament.games as game}
                   <li>
-                    <a class="game-admin-link" href={`/admin/games/${game.token}`}>
+                    <a class="game-admin-link" href={resolve(`/admin/games/${game.token}`)}>
                       <span>{game.title}</span>
                       <small>
                         {#if game.playedAt}{new Date(game.playedAt).toLocaleString()} · {/if}vs. {game.opponentName}
@@ -838,7 +839,7 @@
               <h2>No events yet</h2>
               <p>Create the first event for {roster.name}.</p>
             </div>
-            <a class="primary-command" href={`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&view=new-tournament`}><Plus size={14} />New event</a>
+            <a class="primary-command" href={resolve(`/admin/teams/${data.setup.slug}?season=${roster.id}&section=events&view=new-tournament`)}><Plus size={14} />New event</a>
           </section>
         {/if}
       {/if}

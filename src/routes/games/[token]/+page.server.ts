@@ -1,4 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { parseGameViewerSettingsJson } from '$lib/game-settings';
 import { CatalogRepository } from '$lib/server/catalog';
 import { requireGameAccess } from '$lib/server/access';
@@ -8,7 +9,7 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ params, locals, url }) => {
   if (locals.role === 'guest') {
-    redirect(303, `/login?next=${encodeURIComponent(url.pathname)}`);
+    redirect(303, `${resolve('/login')}?next=${encodeURIComponent(url.pathname)}`);
   }
   const game = requireGameAccess(locals, params.token);
   const tracking = new GameTrackingRepository().getSnapshot(params.token);
@@ -26,8 +27,8 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
       updatedAt: game.updatedAt,
       hasVideo: game.hasVideo,
       settings: game.settings,
-      metadataUrl: game.hasVideo ? `/api/games/${game.token}/metadata` : null,
-      videoUrl: game.hasVideo ? `/api/games/${game.token}/video` : null,
+      metadataUrl: game.hasVideo ? resolve(`/api/games/${game.token}/metadata`) : null,
+      videoUrl: game.hasVideo ? resolve(`/api/games/${game.token}/video`) : null,
     },
   };
 };
@@ -81,6 +82,9 @@ export const actions: Actions = {
 
 function requireAdmin(role: App.Locals['role'], token: string): void {
   if (role !== 'admin') {
-    redirect(303, `/login?next=${encodeURIComponent(`/games/${token}`)}`);
+    redirect(
+      303,
+      `${resolve('/login')}?next=${encodeURIComponent(resolve(`/games/${token}`))}`,
+    );
   }
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowLeft, Pencil, Play, Video } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
 
   let { data } = $props();
 </script>
@@ -9,14 +10,14 @@
 </svelte:head>
 
 <section class="games-page">
-  <a class="back-link" href="/teams"><ArrowLeft size={16} aria-hidden="true" />Teams</a>
+  <a class="back-link" href={resolve('/teams')}><ArrowLeft size={16} aria-hidden="true" />Teams</a>
   <header class="page-heading">
     <div>
       <h1>{data.team.name}</h1>
       <p>{data.team.games.length} {data.team.games.length === 1 ? 'game' : 'games'}</p>
     </div>
     {#if data.role === 'admin'}
-      <a class="edit-command" href={`/admin/teams/${data.team.slug}`}><Pencil size={14} aria-hidden="true" />Edit team</a>
+      <a class="edit-command" href={resolve(`/admin/teams/${data.team.slug}`)}><Pencil size={14} aria-hidden="true" />Edit team</a>
     {/if}
   </header>
 
@@ -36,9 +37,9 @@
                 <p>{tournament.seasonRosterName} · {games.length} {games.length === 1 ? 'game' : 'games'}</p>
               </div>
               <div class="tournament-actions">
-                <a href={`/teams/${data.team.slug}/tournaments/${tournament.id}`}>Event stats</a>
+                <a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>Event stats</a>
                 {#if data.role === 'admin'}
-                  <a class="edit-command" href={`/admin/teams/${data.team.slug}?season=${tournament.seasonRosterId}&tournament=${tournament.id}`}><Pencil size={13} aria-hidden="true" />Edit event</a>
+                  <a class="edit-command" href={resolve(`/admin/teams/${data.team.slug}?season=${tournament.seasonRosterId}&tournament=${tournament.id}`)}><Pencil size={13} aria-hidden="true" />Edit event</a>
                 {/if}
               </div>
             </header>
@@ -49,7 +50,7 @@
                 {#each games as game}
                   {@const score = data.scores[game.id]}
                   <div class="game-card-shell">
-                    <a class="game-card" href={`/games/${game.token}`}>
+                    <a class="game-card" href={resolve(`/games/${game.token}`)}>
                       <div class="game-thumbnail">
                         <Play size={25} fill="currentColor" aria-hidden="true" />
                         {#if score}
@@ -65,7 +66,7 @@
                     {#if data.role === 'admin'}
                       <a
                         class="game-edit-command"
-                        href={`/admin/games/${game.token}`}
+                        href={resolve(`/admin/games/${game.token}`)}
                         aria-label={`Edit ${game.title}`}
                         title="Edit game"
                       ><Pencil size={14} aria-hidden="true" /></a>

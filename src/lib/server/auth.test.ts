@@ -41,11 +41,12 @@ describe('team-scoped authentication', () => {
   it('keeps player destinations within their team or an authorized game route', () => {
     const player = { role: 'player' as const, teamId: 7, teamSlug: 'union' };
     const admin = { role: 'admin' as const, teamId: null, teamSlug: null };
-    expect(loginDestination(player, '/admin')).toBe('/teams/union');
-    expect(loginDestination(player, '/teams/surge')).toBe('/teams/union');
-    expect(loginDestination(player, '/games/game-token')).toBe('/games/game-token');
-    expect(loginDestination(admin, '/admin')).toBe('/admin');
-    expect(loginDestination(admin, '//outside.example')).toBe('/admin');
+    expect(loginDestination(player, '/frisbee/admin')).toBe('/frisbee/teams/union');
+    expect(loginDestination(player, '/frisbee/teams/surge')).toBe('/frisbee/teams/union');
+    expect(loginDestination(player, '/frisbee/games/game-token')).toBe('/frisbee/games/game-token');
+    expect(loginDestination(admin, '/frisbee/admin')).toBe('/frisbee/admin');
+    expect(loginDestination(admin, '/outside-frisbee')).toBe('/frisbee/admin');
+    expect(loginDestination(admin, '//outside.example')).toBe('/frisbee/admin');
   });
 
   it('accepts signed team sessions and rejects tampered cookies', () => {
@@ -53,13 +54,18 @@ describe('team-scoped authentication', () => {
     const database = openDatabase(':memory:');
     const team = new CatalogRepository(database).createTeam('Union', 'union-password');
     const values = new Map<string, string>();
+    let cookiePath = '';
     const cookies = {
       get: (name: string) => values.get(name),
-      set: (name: string, value: string) => values.set(name, value),
+      set: (name: string, value: string, options: { path: string }) => {
+        cookiePath = options.path;
+        values.set(name, value);
+      },
       delete: (name: string) => values.delete(name),
     } as unknown as Cookies;
 
     setAuthSession(cookies, { role: 'player', teamId: team.id, teamSlug: 'union' }, database);
+    expect(cookiePath).toBe('/frisbee');
     expect(sessionFromCookies(cookies, database)).toEqual({
       role: 'player',
       teamId: team.id,

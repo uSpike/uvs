@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { CatalogRepository } from '$lib/server/catalog';
 import { ShareLinkRepository } from '$lib/server/share-links';
 import type { PageServerLoad } from './$types';
@@ -14,8 +15,8 @@ export const load: PageServerLoad = ({ params }) => {
       title: game.title,
       teamName: game.teamName,
       settings: game.settings,
-      metadataUrl: `/api/shares/${params.token}/metadata`,
-      videoUrl: `/api/shares/${params.token}/video`,
+      metadataUrl: resolve(`/api/shares/${params.token}/metadata`),
+      videoUrl: resolve(`/api/shares/${params.token}/video`),
     },
   };
 };

@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { Cookies } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import type Database from 'better-sqlite3';
 import { getDatabase } from './database';
 
@@ -33,6 +34,10 @@ const SCRYPT_COST = 16_384;
 const SCRYPT_BLOCK_SIZE = 8;
 const SCRYPT_PARALLELISM = 1;
 const PASSWORD_KEY_BYTES = 32;
+const APPLICATION_ROOT = resolve('/');
+const SESSION_COOKIE_PATH = APPLICATION_ROOT === '/'
+  ? APPLICATION_ROOT
+  : APPLICATION_ROOT.slice(0, -1);
 
 /** Authenticate the global administrator password. */
 export function authenticateAdminPassword(password: string): boolean {
@@ -135,7 +140,7 @@ export function setAuthSession(
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
   cookies.set(SESSION_COOKIE, `${encodedPayload}.${sign(encodedPayload)}`, {
-    path: '/',
+    path: SESSION_COOKIE_PATH,
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
@@ -145,15 +150,28 @@ export function setAuthSession(
 
 /** Remove the active browser session. */
 export function clearRoleSession(cookies: Cookies): void {
-  cookies.delete(SESSION_COOKIE, { path: '/' });
+  cookies.delete(SESSION_COOKIE, { path: SESSION_COOKIE_PATH });
 }
 
 /** Return a safe post-login destination for an authenticated session. */
 export function loginDestination(session: AuthSession, requested: string | null): string {
-  const fallback = session.role === 'admin' ? '/admin' : `/teams/${session.teamSlug}`;
-  if (!requested || !requested.startsWith('/') || requested.startsWith('//')) return fallback;
+  const fallback = session.role === 'admin'
+    ? resolve('/admin')
+    : resolve(`/teams/${session.teamSlug}`);
+  if (
+    !requested ||
+    requested.startsWith('//') ||
+    (requested !== SESSION_COOKIE_PATH && !requested.startsWith(APPLICATION_ROOT))
+  ) {
+    return fallback;
+  }
   if (session.role === 'admin') return requested;
-  if (requested.startsWith(`/teams/${session.teamSlug}`) || requested.startsWith('/games/')) {
+  const teamPath = resolve(`/teams/${session.teamSlug}`);
+  if (
+    requested === teamPath ||
+    requested.startsWith(`${teamPath}/`) ||
+    requested.startsWith(`${APPLICATION_ROOT}games/`)
+  ) {
     return requested;
   }
   return fallback;
