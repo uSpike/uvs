@@ -535,10 +535,12 @@ export function autoCameraEndzoneAtTime(
   data: Pick<TrackingGameData, 'game' | 'points'>,
   timeMs: number,
 ): TeamEndzone | null {
-  let inferredEndzone = data.game.initialLineupEndzone;
   const points = [...data.points].sort(
     (left, right) => left.sequenceNumber - right.sequenceNumber || left.id - right.id,
   );
+  if (points.length === 0) return null;
+
+  let inferredEndzone = data.game.initialLineupEndzone;
 
   for (const point of points) {
     const lineupEndzone = point.lineupEndzoneOverride ?? inferredEndzone;

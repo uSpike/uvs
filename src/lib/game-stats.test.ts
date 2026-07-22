@@ -160,6 +160,11 @@ describe('game statistics', () => {
     expect(autoCameraEndzoneAtTime(data, 35_000)).toBe('left');
   });
 
+  it('uses the full field when the game has no recorded points', () => {
+    expect(autoCameraEndzoneAtTime(gameData([]), 0)).toBeNull();
+    expect(autoCameraEndzoneAtTime(gameData([]), 60_000)).toBeNull();
+  });
+
   it('uses a point endzone override as the basis for later inference', () => {
     const overridden = point({
       lineupEndzoneOverride: 'right',
