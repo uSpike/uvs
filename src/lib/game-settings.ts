@@ -79,15 +79,16 @@ export function parseGameViewerSettings(value: unknown): GameViewerSettings {
         10,
         'New area delay',
       ),
-      actionJoinDistanceDegrees:
-        autoCamera.actionJoinDistanceDegrees === undefined
-          ? DEFAULT_AUTO_CAMERA_CONFIG.actionJoinDistanceDegrees
-          : requireRange(
-              autoCamera.actionJoinDistanceDegrees,
-              4,
-              30,
-              'Action reach',
-            ),
+      trustHaloRadiusDegrees:
+        autoCamera.trustHaloRadiusDegrees === undefined
+          ? autoCamera.actionJoinDistanceDegrees === undefined
+            ? DEFAULT_AUTO_CAMERA_CONFIG.trustHaloRadiusDegrees
+            : requireRange(autoCamera.actionJoinDistanceDegrees, 4, 30, 'Halo size')
+          : requireRange(autoCamera.trustHaloRadiusDegrees, 4, 30, 'Halo size'),
+      trustHaloTimeoutSeconds:
+        autoCamera.trustHaloTimeoutSeconds === undefined
+          ? DEFAULT_AUTO_CAMERA_CONFIG.trustHaloTimeoutSeconds
+          : requireRange(autoCamera.trustHaloTimeoutSeconds, 0.5, 5, 'Halo memory'),
       lookAheadSeconds: requireRange(autoCamera.lookAheadSeconds, 0, 3, 'Look ahead'),
       smoothingSeconds: requireRange(autoCamera.smoothingSeconds, 0.1, 3, 'Smooth time'),
       maxPanSpeedDegrees: requireRange(

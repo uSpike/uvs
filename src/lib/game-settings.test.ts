@@ -25,16 +25,25 @@ describe('game viewer settings', () => {
     expect(settings.fovDegrees).toBe(75);
     expect(settings.recordingMode).toBe('video_assisted');
     expect(settings.autoCamera.newAreaDelaySeconds).toBe(5);
-    expect(settings.autoCamera.actionJoinDistanceDegrees).toBe(10);
+    expect(settings.autoCamera.trustHaloRadiusDegrees).toBe(16);
+    expect(settings.autoCamera.trustHaloTimeoutSeconds).toBe(1.5);
   });
 
-  it('migrates settings written before recording modes to video-assisted entry', () => {
+  it('migrates settings written before recording modes and trust halos', () => {
     const settings = defaultGameViewerSettings(metadata);
     const { recordingMode: _recordingMode, autoCamera, ...legacy } = settings;
-    const { actionJoinDistanceDegrees: _actionReach, ...legacyAutoCamera } = autoCamera;
-    const migrated = parseGameViewerSettings({ ...legacy, autoCamera: legacyAutoCamera });
+    const {
+      trustHaloRadiusDegrees: _haloSize,
+      trustHaloTimeoutSeconds: _haloMemory,
+      ...legacyAutoCamera
+    } = autoCamera;
+    const migrated = parseGameViewerSettings({
+      ...legacy,
+      autoCamera: { ...legacyAutoCamera, actionJoinDistanceDegrees: 10 },
+    });
     expect(migrated.recordingMode).toBe('video_assisted');
-    expect(migrated.autoCamera.actionJoinDistanceDegrees).toBe(10);
+    expect(migrated.autoCamera.trustHaloRadiusDegrees).toBe(10);
+    expect(migrated.autoCamera.trustHaloTimeoutSeconds).toBe(1.5);
   });
 
   it('round-trips a valid settings payload', () => {
@@ -53,5 +62,11 @@ describe('game viewer settings', () => {
         autoCamera: { ...settings.autoCamera, framePaddingPercent: -1 },
       }),
     ).toThrow(/Frame padding/u);
+    expect(() =>
+      parseGameViewerSettings({
+        ...settings,
+        autoCamera: { ...settings.autoCamera, trustHaloTimeoutSeconds: 8 },
+      }),
+    ).toThrow(/Halo memory/u);
   });
 });

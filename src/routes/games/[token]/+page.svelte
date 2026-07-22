@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowLeft, Copy, Edit3, ExternalLink, Link2, Plus, Trash2, Unlock } from '@lucide/svelte';
+  import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, Plus, Trash2, Unlock } from '@lucide/svelte';
   import type { MetadataTimeline } from '$lib/metadata';
   import {
     RecoVideoViewer,
@@ -222,6 +222,13 @@
 
         <div class="header-actions">
           {#if data.role === 'player' || data.role === 'admin'}
+            <a
+              class="secondary-command compact stats-page-command"
+              href={`/teams/${trackingSnapshot.data.game.teamSlug}/tournaments/${trackingSnapshot.data.game.tournamentId}?game=${trackingSnapshot.data.game.token}#game-${trackingSnapshot.data.game.token}`}
+              title="View game and event statistics"
+            ><BarChart3 size={14} aria-hidden="true" />Stats</a>
+          {/if}
+          {#if data.role === 'player' || data.role === 'admin'}
             <button
               class:active={statsEditing}
               class="secondary-command compact stats-edit-command"
@@ -373,6 +380,8 @@
   .viewer-settings-save-form { display: none; }
 
   .header-actions { position: relative; }
+  .stats-page-command { border-color:#4b5148; color:#e0e5dd; background:#292d27; text-decoration:none; }
+  .stats-page-command:hover { border-color:#626a60; color:#fff; background:#343932; }
   .stats-edit-command { border-color:#4b5148; color:#e0e5dd; background:#292d27; }
   .stats-edit-command.active { border-color:#278a54; color:#8de2aa; background:#203328; }
   .share-control { position: relative; }

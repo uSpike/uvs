@@ -86,10 +86,13 @@ one manual panorama-space player selection; ordinary video clicks continue to
 pan the camera at all other times. A possession or reception establishes the
 fixed thrower position, so the next completion marks only its receiver. Form
 mode retains the existing shortcuts: `C` completion, `T`
-turnover, `D` defended, `G` goal or Callahan, `X` conceded, `S` substitution,
+turnover, `G` goal or Callahan, `X` conceded, `S` substitution,
 `F` stoppage/resume, and `Ctrl/Cmd+Z` to undo the most recently added entry.
 Saved spatial actions can be flashed during playback with **Action markers**
 in the viewer options menu; carried thrower positions are deduplicated.
+Outside editing, **Auto-skip gaps** is enabled by default. Playback keeps a
+configurable buffer after a score and before the next pull, then skips the
+unused middle of the gap.
 
 ## Viewer
 
@@ -109,25 +112,25 @@ maintains a virtual camera continuously, even while automatic mode is disabled.
 Enabling the mode snaps the visible camera to that already-calculated pose.
 Current detections and samples inside the configured **Look ahead** window drive
 the virtual camera without relying on track IDs or a fixed player count. The
-camera follows the spatially connected detection region nearest its current
-pose. **Action reach** controls the maximum gap that connects detections into
-that region. At every recorded pull, all mapped detections on both sides of the
-field become a trusted baseline. That trust follows occupied regions with a
-bounded motion allowance for fast players and sparse detection samples, without
-using exported track IDs. **New area delay** still applies to regions first
-occupied after the pull, and persistence alone never admits a remote region.
-Gaps reset new-area history. Manual panning and zooming do not change the
-virtual camera calculation.
+camera frames every trusted detection. At every recorded pull, all mapped
+detections on both sides of the field become a trusted baseline. Each trusted
+detection leaves a short-lived spatial halo, so a nearby future detection is
+trusted immediately without relying on exported track IDs. **Halo size** sets
+that boundary and **Halo memory** controls how long each old position remains
+available as part of the trail. A detection outside every active halo must
+survive **New area delay** before it becomes trusted and begins producing halos
+of its own. Gaps reset new-area history. Manual panning and zooming do not
+change the virtual camera calculation.
 
-Included detection boxes are solid cyan. New disconnected boxes are dashed
-amber until their displayed delay expires, while persistent detections outside
-the action region are dotted gray. Labels show confidence without class names
-or motion arrows. Smooth time, maximum camera speed, and minimum FOV control the
-camera response. **Frame padding** controls the extra edge space around accepted
-detection boxes: lower values produce a tighter crop, while **Minimum FOV**
-remains the zoom-in limit. **Pan accel** and **Zoom accel** limit how quickly
-camera velocity can change, avoiding abrupt reframing. Dragging or manually
-changing FOV exits automatic mode.
+Trusted detection boxes are solid cyan. New boxes are dashed amber until their
+displayed delay expires, while detections filtered by the active endzone are
+dotted gray. Labels show confidence without class names or motion arrows.
+Smooth time, maximum camera speed, and minimum FOV control the camera response.
+**Frame padding** controls the extra edge space around accepted detection boxes:
+lower values produce a tighter crop, while **Minimum FOV** remains the zoom-in
+limit. **Pan accel** and **Zoom accel** limit how quickly camera velocity can
+change, avoiding abrupt reframing. Dragging or manually changing FOV exits
+automatic mode.
 
 Before a point, game tracking can constrain Auto camera to the tracked team's
 lineup endzone. Starting the point releases that constraint without resetting

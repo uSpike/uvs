@@ -375,20 +375,36 @@
                 <span>sec</span>
               </span>
             </label>
-            <label for="action-reach">
-              <span class="field-label">Action reach</span>
+            <label for="halo-size">
+              <span class="field-label">Halo size</span>
               <span class="number-field">
                 <input
-                  id="action-reach"
-                  name="actionJoinDistanceDegrees"
+                  id="halo-size"
+                  name="trustHaloRadiusDegrees"
                   type="number"
                   min="4"
                   max="30"
                   step="1"
-                  value={submittedValues?.actionJoinDistanceDegrees ?? data.game.settings.autoCamera.actionJoinDistanceDegrees}
+                  value={submittedValues?.trustHaloRadiusDegrees ?? data.game.settings.autoCamera.trustHaloRadiusDegrees}
                   required
                 />
                 <span>deg</span>
+              </span>
+            </label>
+            <label for="halo-memory">
+              <span class="field-label">Halo memory</span>
+              <span class="number-field">
+                <input
+                  id="halo-memory"
+                  name="trustHaloTimeoutSeconds"
+                  type="number"
+                  min="0.5"
+                  max="5"
+                  step="0.25"
+                  value={submittedValues?.trustHaloTimeoutSeconds ?? data.game.settings.autoCamera.trustHaloTimeoutSeconds}
+                  required
+                />
+                <span>sec</span>
               </span>
             </label>
             <label for="look-ahead">

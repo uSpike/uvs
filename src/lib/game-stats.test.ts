@@ -5,6 +5,7 @@ import {
   calculatePointState,
   calculateScoreAtTime,
   autoCameraEndzoneAtTime,
+  autoSkipTargetTimeMs,
   gamePlaybackAnnotations,
   latestHandlerSpatialAnnotation,
   latestPointTimeMs,
@@ -169,6 +170,32 @@ describe('game statistics', () => {
     expect(autoCameraEndzoneAtTime(data, 0)).toBe('right');
     expect(autoCameraEndzoneAtTime(data, 5_000)).toBe('left');
     expect(autoCameraEndzoneAtTime(data, 15_000)).toBe('left');
+  });
+
+  it('skips only the middle of video gaps while preserving score and pull buffers', () => {
+    const first = point({
+      startTimeMs: 10_000,
+      events: [event(1, 20_000, 'goal', { throwerId: 1, receiverId: 2, callahan: false })],
+    });
+    const second = point({
+      id: 2,
+      sequenceNumber: 2,
+      startTimeMs: 40_000,
+      events: [event(2, 50_000, 'conceded', { callahan: false })],
+    });
+    const shortGap = point({
+      id: 3,
+      sequenceNumber: 3,
+      startTimeMs: 58_000,
+    });
+    const data = gameData([first, second, shortGap]);
+
+    expect(autoSkipTargetTimeMs(data, 0, 5_000)).toBe(5_000);
+    expect(autoSkipTargetTimeMs(data, 5_000, 5_000)).toBeNull();
+    expect(autoSkipTargetTimeMs(data, 24_999, 5_000)).toBeNull();
+    expect(autoSkipTargetTimeMs(data, 25_000, 5_000)).toBe(35_000);
+    expect(autoSkipTargetTimeMs(data, 35_000, 5_000)).toBeNull();
+    expect(autoSkipTargetTimeMs(data, 55_000, 5_000)).toBeNull();
   });
 
   it('reports each point score, result, and breaks against the offense', () => {

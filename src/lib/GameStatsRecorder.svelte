@@ -19,10 +19,10 @@
     Users,
     X,
   } from '@lucide/svelte';
-  import { autoCameraEndzoneAtTime, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
+  import { autoCameraEndzoneAtTime, autoSkipTargetTimeMs, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
   import type { GameRecordingMode } from './game-settings';
   import type { RecoViewerSpatialMarker, RecoViewerSpatialPoint } from './viewer-types';
-  import { gameEventIsIncomplete, gameEventLabel } from './game-events';
+  import { gameEventLabel } from './game-events';
   import type { MatchupRole } from './matchup';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
 
@@ -71,7 +71,7 @@
     onSnapshotChange: (snapshot: GameTrackingSnapshot) => void;
   } = $props();
 
-  type PanelTab = 'record' | 'paper' | 'players' | 'lines' | 'timeline' | 'highlights';
+  type PanelTab = 'record' | 'paper' | 'highlights';
   type DraftMode = 'point' | 'event' | 'highlight' | null;
   type SpatialDraftStage = 'inactive' | 'place_primary' | 'choose_action' | 'details';
 
@@ -163,6 +163,8 @@
   let manualPointDrafts = $state<ManualPointDraft[]>((() => manualPointRows(initialSnapshot))());
   let observedOpenPointId = $state<number | null>(null);
   let observedOpenPointEndMs = $state(0);
+  let autoSkipPointGaps = $state(true);
+  let pointGapBufferSeconds = $state(5);
 
   const currentPoint = $derived(
     snapshot.currentPointId === null
@@ -208,6 +210,22 @@
 
   $effect(() => {
     if (highlightPlaylistActive && activeTab !== 'highlights') stopHighlightPlaylist();
+  });
+
+  $effect(() => {
+    if (
+      editing ||
+      !autoSkipPointGaps ||
+      activeTab !== 'record' ||
+      !playback.playing ||
+      highlightPlaylistActive
+    ) return;
+    const targetTimeMs = autoSkipTargetTimeMs(
+      snapshot.data,
+      Math.round(playback.currentTime * 1000),
+      Math.round(Math.max(0, pointGapBufferSeconds) * 1000),
+    );
+    if (targetTimeMs !== null) seekPlayback(targetTimeMs / 1000);
   });
 
   onMount(() => {
@@ -715,6 +733,13 @@
     seekPlayback(Number((event.currentTarget as HTMLInputElement).value) / 1000);
   }
 
+  function setPointGapBuffer(event: Event): void {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    pointGapBufferSeconds = Number.isFinite(value)
+      ? Math.min(60, Math.max(0, value))
+      : 5;
+  }
+
   function defaultStrategyId(value: GameTrackingSnapshot, kind: StrategyKind): number {
     const choices = value.data.strategies.filter((strategy) => strategy.kind === kind);
     return choices.find((strategy) => strategy.isDefault)?.id ?? choices[0]?.id ?? 0;
@@ -842,14 +867,6 @@
         (playerId) => point.matchupRoleOverrides[playerId] ?? playerGameRole(playerId),
       ),
     );
-  }
-
-  async function setGameMatchupRole(playerId: number, value: string): Promise<void> {
-    await mutate({
-      operation: 'setGameMatchupRole',
-      playerId,
-      matchupRole: value === 'mmp' || value === 'fmp' ? value : null,
-    });
   }
 
   async function savePoint(): Promise<void> {
@@ -1391,15 +1408,6 @@
     return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
   }
 
-  function formatDuration(milliseconds: number): string {
-    const seconds = Math.round(milliseconds / 1000);
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  }
-
-  function percentage(won: number, played: number): string {
-    return played === 0 ? '—' : `${Math.round((won / played) * 100)}%`;
-  }
-
   function handleShortcut(event: KeyboardEvent): void {
     if (!editing || event.repeat) return;
     const target = event.target as HTMLElement | null;
@@ -1496,13 +1504,10 @@
     {:else}
       {#if snapshot.data.game.hasVideo}
         <button class:active={activeTab === 'record'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'record'}>Record</button>
+        <button class:active={activeTab === 'highlights'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'highlights'}>Highlights</button>
       {:else}
         <button class:active={activeTab === 'paper'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'paper'}>Paper</button>
       {/if}
-      <button class:active={activeTab === 'players'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'players'}>Players</button>
-      <button class:active={activeTab === 'lines'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'lines'}>Lines</button>
-      {#if snapshot.data.game.hasVideo}<button class:active={activeTab === 'highlights'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'highlights'}>Highlights</button>{/if}
-      {#if snapshot.data.game.hasVideo}<button class:active={activeTab === 'timeline'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'timeline'}>Timeline</button>{/if}
     {/if}
   </nav>
 
@@ -1930,7 +1935,7 @@
           <div class="quality-warnings">
             <header><AlertTriangle size={14} /><strong>Needs review</strong><span>{snapshot.statistics.warnings.length}</span></header>
             {#each snapshot.statistics.warnings.slice(0, 4) as warning}<p>{warning}</p>{/each}
-            {#if snapshot.statistics.warnings.length > 4}<button type="button" onclick={() => activeTab = 'timeline'}>Review timeline</button>{/if}
+            {#if snapshot.statistics.warnings.length > 4}<p>{snapshot.statistics.warnings.length - 4} more warnings</p>{/if}
           </div>
         {/if}
       </section>
@@ -2022,50 +2027,6 @@
           {/if}
         </form>
       </section>
-    {:else if activeTab === 'players'}
-      <section class="table-view">
-        <header><h2>Player statistics</h2><span>{snapshot.data.game.title}</span></header>
-        {#if editing}
-          <details class="game-role-overrides">
-            <summary>Game matchup role overrides <small>Rare</small></summary>
-            <div>
-              {#each snapshot.data.players as player}
-                <label>
-                  <span>{player.name}</span>
-                  <select
-                    value={player.gameMatchupRoleOverride ?? ''}
-                    disabled={saving}
-                    onchange={(event) => void setGameMatchupRole(player.id, event.currentTarget.value)}
-                  >
-                    <option value="">Roster role ({player.defaultMatchupRole?.toUpperCase() ?? 'not set'})</option>
-                    <option value="mmp">MMP override</option>
-                    <option value="fmp">FMP override</option>
-                  </select>
-                </label>
-              {/each}
-            </div>
-          </details>
-        {/if}
-        <div class="stats-table-scroll"><table><thead><tr><th>Player</th><th title={statHelp.role}>Role</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.receptions}>R</th><th title={statHelp.turnovers}>T</th><th title={statHelp.goals}>G</th><th title={statHelp.assists}>A</th><th title={statHelp.hockeyAssists}>2A</th><th title={statHelp.blocks}>D</th><th title={statHelp.plusMinus}>+/-</th><th title={statHelp.discTime}>Disc</th></tr></thead><tbody>
-          {#each snapshot.statistics.playerStatistics as stats}
-            {@const player = snapshot.data.players.find((candidate) => candidate.id === stats.playerId)}
-            <tr><th>{stats.playerName}</th><td><span class:mmp={player?.matchupRole === 'mmp'} class:fmp={player?.matchupRole === 'fmp'} class="table-matchup-role">{player?.matchupRole?.toUpperCase() ?? '—'}</span>{#if player?.gameMatchupRoleOverride}<sup>game</sup>{/if}</td><td>{formatDuration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{percentage(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{percentage(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.receptions}</td><td>{stats.turnovers}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{formatDuration(stats.timeWithDiscMs)}</td></tr>
-          {/each}
-        </tbody></table></div>
-      </section>
-    {:else if activeTab === 'lines'}
-      <section class="table-view">
-        <header><h2>Point matchup statistics</h2><span>{snapshot.statistics.matchupStatistics.unclassifiedPoints} unclassified</span></header>
-        <div class="matchup-stats-grid">
-          {#each [snapshot.statistics.matchupStatistics.mmp, snapshot.statistics.matchupStatistics.fmp] as stats}
-            <div class:mmp={stats.matchup === 'mmp'} class:fmp={stats.matchup === 'fmp'} title={statHelp.matchupPoints}><strong>{stats.matchup.toUpperCase()}</strong><span>{stats.pointsWon}/{stats.pointsPlayed} won</span><small>O {percentage(stats.oPointsWon, stats.oPointsPlayed)} · D {percentage(stats.dPointsWon, stats.dPointsPlayed)}</small></div>
-          {/each}
-        </div>
-        <header><h2>Line statistics</h2><span>Calculated once per point or event</span></header>
-        <div class="stats-table-scroll"><table><thead><tr><th>Line</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.turnovers}>T</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.goalsFor}>GF</th><th title={statHelp.goalsAgainst}>GA</th><th title={statHelp.plusMinus}>+/-</th></tr></thead><tbody>
-          {#each snapshot.statistics.lineStatistics as stats}<tr><th>{stats.lineName}</th><td>{formatDuration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{percentage(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{percentage(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.turnovers}</td><td>{stats.blocks}</td><td>{stats.goalsFor}</td><td>{stats.goalsAgainst}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td></tr>{/each}
-        </tbody></table></div>
-      </section>
     {:else if activeTab === 'highlights'}
       <section class="highlight-view">
         <header>
@@ -2101,21 +2062,10 @@
           </div>
         {/if}
       </section>
-    {:else}
-      <section class="timeline-view">
-        <header><h2>Editable timeline</h2><span>{timelineItems().length} entries</span></header>
-        {#each timelineItems() as item}
-          <div class:point-entry={item.kind === 'point'} class:incomplete={item.kind === 'event' && gameEventIsIncomplete(item.event.type, item.event.payload)} class="timeline-row">
-            <button class="timeline-time" type="button" onclick={() => seekPlayback(item.timeMs / 1000)}>{formatTime(item.timeMs)}</button>
-            <div>{#if item.kind === 'point'}<strong>Point {item.point.sequenceNumber} pull</strong><span>{snapshot.data.lines.find((line) => line.id === item.point.lineId)?.name ?? 'Unknown line'} · {persistedPointMatchup(item.point)?.toUpperCase() ?? 'unclassified'} · {item.point.startingPossession === 'offense' ? 'O' : 'D'}</span>{:else}<strong>{gameEventLabel(item.event.type)}{#if gameEventIsIncomplete(item.event.type, item.event.payload)} <em>Incomplete</em>{/if}</strong><span>{eventDescription(item.event)}</span>{/if}</div>
-            {#if editing}<div class="timeline-actions"><button type="button" onclick={() => item.kind === 'point' ? openPointEditor(item.point) : openEventEditor(item.event)} title="Edit"><Edit3 size={14} /></button><button type="button" onclick={() => item.kind === 'point' ? void deletePoint(item.point) : void deleteEvent(item.event)} title="Delete"><Trash2 size={14} /></button></div>{/if}
-          </div>
-        {/each}
-      </section>
     {/if}
   </div>
 
-  {#if activeTab === 'record' && (pointScrubber || (editing && draftMode === null && snapshot.data.points.length > 0))}
+  {#if activeTab === 'record' && (pointScrubber || (draftMode === null && snapshot.data.points.length > 0))}
     <footer class="point-playback-controls">
       {#if editing && draftMode === null && snapshot.data.points.length > 0}
         <nav class="point-step-navigation" aria-label="Point navigation">
@@ -2123,6 +2073,25 @@
           <span>{recordPoint ? `Point ${recordPoint.sequenceNumber}` : 'Between points'}</span>
           <button type="button" disabled={!nextNavigationPoint} onclick={() => { if (nextNavigationPoint) seekToPoint(nextNavigationPoint); }}>Next point<ChevronRight size={14} /></button>
         </nav>
+      {/if}
+      {#if !editing && snapshot.data.points.length > 0}
+        <div class="auto-skip-settings">
+          <label class="auto-skip-toggle"><input type="checkbox" bind:checked={autoSkipPointGaps} /><span>Auto-skip gaps</span></label>
+          <label class:disabled={!autoSkipPointGaps} class="auto-skip-buffer">
+            <span>Buffer</span>
+            <input
+              type="number"
+              min="0"
+              max="60"
+              step="1"
+              value={pointGapBufferSeconds}
+              disabled={!autoSkipPointGaps}
+              aria-label="Seconds to keep after a score and before the next pull"
+              onchange={setPointGapBuffer}
+            />
+            <span>s each side</span>
+          </label>
+        </div>
       {/if}
       {#if pointScrubber}
         {@const scrubberValueMs = Math.min(
@@ -2236,13 +2205,19 @@
   .panel-tabs button:disabled { cursor:not-allowed; opacity:.35; }
   .panel-content { flex:1 1 auto; min-height:0; overflow:auto; }
   .point-playback-controls { flex:0 0 auto; border-top:1px solid #465047; background:#1b201c; box-shadow:0 -5px 16px rgba(0,0,0,.22); }
+  .auto-skip-settings { display:flex; align-items:center; justify-content:space-between; gap:9px; padding:7px 11px; border-bottom:1px solid #343a34; color:#aeb7ac; background:#1d201c; font-size:9px; }
+  .auto-skip-toggle,.auto-skip-buffer { display:flex; align-items:center; gap:5px; min-width:0; }
+  .auto-skip-toggle { color:#d2d9d0; font-weight:700; }
+  .auto-skip-toggle input { width:14px; height:14px; margin:0; accent-color:#1592ac; }
+  .auto-skip-buffer input { width:42px; height:25px; padding:0 4px; border:1px solid #485149; border-radius:3px; color:#edf2ed; background:#282e29; font-size:9px; text-align:center; }
+  .auto-skip-buffer.disabled { opacity:.4; }
   .point-scrubber { display:grid; gap:5px; padding:8px 12px 7px; background:#1d241f; }
   .point-scrubber header,.point-scrubber > div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .point-scrubber header strong { color:#dce5dc; font-size:10px; }
   .point-scrubber header span { color:#aab7aa; font:9px ui-monospace,monospace; font-variant-numeric:tabular-nums; }
   .point-scrubber input { width:100%; height:14px; margin:0; accent-color:#43a36d; cursor:pointer; }
   .point-scrubber > div { color:#778177; font-size:8px; font-weight:650; text-transform:uppercase; }
-  .record-view,.timeline-view,.table-view { min-height:100%; }
+  .record-view { min-height:100%; }
   .recorder-toolbar { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; border-bottom:1px solid #30342e; color:#9fa69c; font-size:10px; }
   .recorder-toolbar span { display:flex; align-items:center; gap:5px; }
   .recorder-toolbar small { display:flex; align-items:center; gap:5px; color:#7f887e; font-size:8px; }
@@ -2322,8 +2297,8 @@
   .recent-events { border-top:1px solid #353934; }
   .point-events { margin-top:2px; }
   .recent-header-actions > span { color:#7f877d; font-size:9px; }
-  .recent-events header,.table-view > header,.timeline-view > header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; }
-  .recent-events h3,.table-view h2,.timeline-view h2 { margin:0; color:#dfe4dc; font-size:11px; }
+  .recent-events header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; }
+  .recent-events h3 { margin:0; color:#dfe4dc; font-size:11px; }
   .recent-header-actions { display:flex; align-items:center; gap:8px; }
   .recent-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:stretch; width:100%; min-height:35px; border-top:1px solid #2c302b; background:transparent; }
   .recent-row:hover,.recent-row:focus-within { background:#222520; }
@@ -2344,7 +2319,6 @@
   .quality-warnings header strong { flex:1; font-size:10px; }
   .quality-warnings header span { font-size:9px; }
   .quality-warnings p { margin:4px 0; color:#c9b878; font-size:9px; }
-  .quality-warnings button { padding:0; border:0; color:#f0d77d; background:transparent; font-size:9px; text-decoration:underline; }
   .entry-form { display:grid; gap:13px; padding:13px; }
   .entry-form header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:9px; border-bottom:1px solid #353934; }
   .entry-form h2 { margin:0; font-size:14px; }
@@ -2412,14 +2386,6 @@
   .entry-form footer button { display:flex; align-items:center; gap:5px; min-height:34px; padding:0 10px; border:1px solid #4a5048; border-radius:4px; color:#d4dad1; background:#292d27; font-size:11px; font-weight:700; }
   .entry-form footer button.save { border-color:#087f9b; color:#fff; background:#087f9b; }
   .entry-form footer button:disabled { cursor:not-allowed; opacity:.45; }
-  .table-view > header,.timeline-view > header { border-bottom:1px solid #353934; }
-  .table-view header span,.timeline-view header span { color:#7f867c; font-size:9px; }
-  .game-role-overrides { border-bottom:1px solid #353934; background:#20231f; }
-  .game-role-overrides > summary { padding:9px 12px; cursor:pointer; color:#bfc6bc; font-size:10px; font-weight:680; }
-  .game-role-overrides > summary small { margin-left:5px; color:#d6b75e; font-size:8px; text-transform:uppercase; }
-  .game-role-overrides > div { display:grid; gap:5px; padding:0 10px 10px; }
-  .game-role-overrides label { display:grid; grid-template-columns:minmax(0,1fr) 180px; align-items:center; gap:8px; color:#9da49a; font-size:9px; }
-  .game-role-overrides select { min-height:30px; padding:4px 6px; border:1px solid #4a5048; border-radius:3px; color:#e5e9e2; background:#292d27; font-size:9px; }
   .paper-view > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 12px; border-bottom:1px solid #353934; }
   .paper-view > header > div { display:grid; gap:3px; }
   .paper-view h2 { margin:0; color:#e2e7df; font-size:13px; }
@@ -2450,31 +2416,11 @@
   .paper-edit-note { margin:0; }
   .paper-actions { display:flex; justify-content:flex-end; gap:7px; padding-top:4px; border-top:1px solid #353934; }
   .paper-actions button.save { border-color:#087f9b; color:#fff; background:#087f9b; }
-  .matchup-stats-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; padding:10px 12px; border-bottom:1px solid #353934; }
-  .matchup-stats-grid > div { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 8px; padding:8px; border:1px solid #3b4039; border-radius:4px; background:#20231f; }
-  .matchup-stats-grid strong { grid-row:1 / span 2; align-self:center; color:#b7beb4; font-size:12px; }
-  .matchup-stats-grid .mmp strong { color:#72c6b5; }
-  .matchup-stats-grid .fmp strong { color:#ddb95f; }
-  .matchup-stats-grid span { color:#d4dad1; font-size:10px; }
-  .matchup-stats-grid small { color:#858c82; font-size:8px; }
-  td sup { margin-left:2px; color:#d6b75e; font-size:6px; text-transform:uppercase; }
-  .table-matchup-role { font-weight:800; }
-  .table-matchup-role.mmp { color:#72c6b5; }
-  .table-matchup-role.fmp { color:#ddb95f; }
-  .stats-table-scroll { max-width:100%; overflow:auto; }
   table { width:max-content; min-width:100%; border-collapse:collapse; font-size:9px; }
   th,td { height:31px; padding:4px 7px; border-bottom:1px solid #2d312c; text-align:right; white-space:nowrap; }
   thead th { position:sticky; top:0; color:#8f968c; background:#20231f; font-size:8px; text-transform:uppercase; }
   th:first-child { position:sticky; left:0; min-width:110px; color:#d7dcd5; background:#1d201c; text-align:left; }
   tbody tr:hover td,tbody tr:hover th { background:#252824; }
-  .timeline-row { display:grid; grid-template-columns:48px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:44px; padding:5px 8px; border-bottom:1px solid #2d312c; }
-  .timeline-row.point-entry { border-top:1px solid #4a5048; background:#20231f; }
-  .timeline-row.incomplete { box-shadow:inset 3px 0 #d9a532; }
-  .timeline-time { padding:0; border:0; color:#aab1a7; background:transparent; font:9px ui-monospace,monospace; text-align:left; }
-  .timeline-row > div:nth-child(2) { display:grid; gap:3px; min-width:0; }
-  .timeline-row strong { overflow:hidden; color:#dce1da; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-  .timeline-row strong em { margin-left:4px; color:#e8c363; font-size:8px; font-style:normal; text-transform:uppercase; }
-  .timeline-row span { overflow:hidden; color:#7f877d; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
   .timeline-actions { display:flex; gap:3px; }
   .timeline-actions button { display:grid; place-items:center; width:27px; height:27px; padding:0; border:1px solid #42473f; border-radius:3px; color:#aeb5ab; background:#252824; }
   .highlight-view { min-height:100%; }

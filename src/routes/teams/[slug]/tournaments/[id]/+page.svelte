@@ -62,7 +62,7 @@
     <header><h2>Games</h2></header>
     <div class="game-list">
       {#each data.games as game}
-        <details class="game-disclosure">
+        <details id={`game-${game.token}`} class="game-disclosure" open={data.focusedGameToken === game.token}>
           <summary>
             <span class="play">{#if game.hasVideo}<Play size={14} fill="currentColor" />{:else}<ClipboardList size={14} />{/if}</span>
             <span class="game-name"><strong>{game.title}</strong><small>vs {game.opponentName}</small></span>
@@ -89,6 +89,10 @@
     </div>
   </section>
 
+  <div class="totals-heading">
+    <h2>Event totals</h2>
+    <span>All {data.games.length} {data.games.length === 1 ? 'game' : 'games'}</span>
+  </div>
   {@render statisticsSections(data.statistics)}
 </div>
 
@@ -127,6 +131,9 @@
   .game-breakdown > .stats-section:last-child { margin-bottom:0; }
   .game-coverage-note { margin:0 0 12px; }
   .game-stat-empty { margin:0; padding:18px; border:1px dashed #c9cec6; color:#747c72; background:#fff; font-size:11px; text-align:center; }
+  .totals-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:30px 0 10px; padding-bottom:8px; border-bottom:2px solid #087f9b; }
+  .totals-heading h2 { margin:0; color:#252b24; font-size:18px; }
+  .totals-heading span { color:#747c72; font-size:10px; }
   .matchup-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:12px; }
   .matchup-summary > div { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 10px; padding:11px; border:1px solid #dde2da; background:#f8faf7; }
   .matchup-summary strong { grid-row:1 / span 2; align-self:center; color:#596158; font-size:15px; }

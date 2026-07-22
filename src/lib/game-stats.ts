@@ -561,6 +561,42 @@ export function autoCameraEndzoneAtTime(
   return inferredEndzone;
 }
 
+/**
+ * Return the next useful playback time when the current time is inside an
+ * unrecorded gap. The same buffer is preserved after a score and before a pull.
+ */
+export function autoSkipTargetTimeMs(
+  data: Pick<TrackingGameData, 'points'>,
+  timeMs: number,
+  bufferMs: number,
+): number | null {
+  if (!Number.isFinite(timeMs) || !Number.isFinite(bufferMs)) return null;
+  const currentTimeMs = Math.max(0, timeMs);
+  const safeBufferMs = Math.max(0, bufferMs);
+  const points = [...data.points].sort(
+    (left, right) => left.startTimeMs - right.startTimeMs || left.id - right.id,
+  );
+  const firstPoint = points[0];
+  if (!firstPoint) return null;
+
+  const firstPointLeadInMs = Math.max(0, firstPoint.startTimeMs - safeBufferMs);
+  if (currentTimeMs < firstPointLeadInMs) return firstPointLeadInMs;
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const state = calculatePointState(points[index]);
+    if (!state.ended || state.endTimeMs === null) continue;
+    const nextPointLeadInMs = Math.max(0, points[index + 1].startTimeMs - safeBufferMs);
+    const gapStartMs = state.endTimeMs + safeBufferMs;
+    if (
+      gapStartMs < nextPointLeadInMs &&
+      currentTimeMs >= gapStartMs &&
+      currentTimeMs < nextPointLeadInMs
+    ) return nextPointLeadInMs;
+  }
+
+  return null;
+}
+
 /** Calculate the score immediately after each recorded point. */
 export function calculatePointResults(data: TrackingGameData): PointResultSummary[] {
   let ourScore = data.game.initialOurScore;

@@ -38,13 +38,13 @@
     autoCameraSubjectsForDetections,
     buildDetectionAreaHistoryTimeline,
     requiredAutoCameraFov,
-    selectActionRegionDetections,
+    selectTrustedDetections,
     stepAutoCamera,
-    type ActionRegionDetectionState,
     type AutoCameraConfig,
     type AutoCameraPose,
     type AutoCameraVelocity,
     type DetectionAreaHistoryTimeline,
+    type DetectionTrustState,
   } from './auto-camera';
   import { drawDetectionOverlay, type DetectionOverlayView } from './detection-overlay';
   import {
@@ -103,7 +103,7 @@
     metadata: MetadataTimeline | null;
     areaHistory: DetectionAreaHistoryTimeline | null;
     minimumAreaHistorySeconds: number;
-    actionStateByDetection: Map<WebDetection, ActionRegionDetectionState>;
+    trustStateByDetection: Map<WebDetection, DetectionTrustState>;
     view: DetectionOverlayView;
   }
 
@@ -190,6 +190,8 @@
   let detectionAreaHistorySource: MetadataTimeline | null = null;
   let detectionAreaHistoryDuration = -1;
   let detectionAreaHistoryBaselineKey = '';
+  let detectionAreaHistoryTrustKey = '';
+  let detectionAreaHistoryBuildTimer: ReturnType<typeof setTimeout> | null = null;
   let autoCameraEnabled = false;
   let autoCameraOnPlay = true;
   let autoControlsOpen = false;
@@ -249,6 +251,9 @@
     timeline,
     duration,
     trustedDetectionBaselineTimesMs,
+    autoCameraConfig.newAreaDelaySeconds,
+    autoCameraConfig.trustHaloRadiusDegrees,
+    autoCameraConfig.trustHaloTimeoutSeconds,
   );
   $: hasAutoCameraData =
     timeline?.detectionSamples.some((sample) =>
@@ -256,21 +261,22 @@
     ) ?? false;
   $: frameDetections = timeline ? detectionsAtFrame(timeline, currentFrame) : [];
   $: currentDetections = showDetections ? frameDetections : NO_DETECTIONS;
-  $: currentActionRegion = selectActionRegionDetections(
+  $: currentTrustedDetections = selectTrustedDetections(
     detectionsInAutoCameraEndzone(
       frameDetections,
       timeline?.manifest.panorama_extent ?? null,
     ),
     detectionAreaHistoryTimeline,
     autoCameraConfig.newAreaDelaySeconds,
-    virtualAutoCameraPose,
-    autoCameraConfig.actionJoinDistanceDegrees,
   );
-  $: framingDetections = currentActionRegion.included;
+  $: framingDetections = currentTrustedDetections.included;
   $: framingSubjects = autoCameraSubjectsForRegion(
     framingDetections,
     timeline?.manifest.panorama_extent ?? null,
   );
+  $: pendingDetectionCount = [...currentTrustedDetections.stateByDetection.values()].filter(
+    (state) => state === 'pending',
+  ).length;
   $: mappedDetectionCount = frameDetections.filter((detection) => detection.panorama).length;
   $: perspectiveAspect =
     viewportWidth > 0 && viewportHeight > 0
@@ -312,25 +318,58 @@
     metadata: MetadataTimeline | null,
     videoDuration: number,
     baselineTimesMs: readonly number[],
+    newAreaDelaySeconds: number,
+    trustHaloRadiusDegrees: number,
+    trustHaloTimeoutSeconds: number,
   ): void {
     const baselineTimesSeconds = baselineTimesMs
       .filter((timeMs) => Number.isFinite(timeMs) && timeMs >= 0)
       .map((timeMs) => timeMs / 1000)
       .sort((left, right) => left - right);
     const baselineKey = baselineTimesSeconds.join(',');
+    const trustKey = [
+      newAreaDelaySeconds,
+      trustHaloRadiusDegrees,
+      trustHaloTimeoutSeconds,
+    ].join(',');
     if (
       metadata === detectionAreaHistorySource &&
       videoDuration === detectionAreaHistoryDuration &&
-      baselineKey === detectionAreaHistoryBaselineKey
+      baselineKey === detectionAreaHistoryBaselineKey &&
+      trustKey === detectionAreaHistoryTrustKey
     ) {
       return;
     }
-    detectionAreaHistorySource = metadata;
-    detectionAreaHistoryDuration = videoDuration;
-    detectionAreaHistoryBaselineKey = baselineKey;
-    detectionAreaHistoryTimeline = metadata
-      ? buildDetectionAreaHistoryTimeline(metadata, videoDuration, baselineTimesSeconds)
-      : null;
+
+    const structuralChange =
+      metadata !== detectionAreaHistorySource ||
+      videoDuration !== detectionAreaHistoryDuration ||
+      baselineKey !== detectionAreaHistoryBaselineKey;
+    const rebuild = () => {
+      detectionAreaHistoryBuildTimer = null;
+      detectionAreaHistorySource = metadata;
+      detectionAreaHistoryDuration = videoDuration;
+      detectionAreaHistoryBaselineKey = baselineKey;
+      detectionAreaHistoryTrustKey = trustKey;
+      detectionAreaHistoryTimeline = metadata
+        ? buildDetectionAreaHistoryTimeline(metadata, videoDuration, baselineTimesSeconds, {
+            newAreaDelaySeconds,
+            trustHaloRadiusDegrees,
+            trustHaloTimeoutSeconds,
+          })
+        : null;
+      schedulePlaybackClock();
+    };
+
+    if (detectionAreaHistoryBuildTimer !== null) {
+      clearTimeout(detectionAreaHistoryBuildTimer);
+      detectionAreaHistoryBuildTimer = null;
+    }
+    if (structuralChange || detectionAreaHistoryTimeline === null) {
+      rebuild();
+      return;
+    }
+    detectionAreaHistoryBuildTimer = setTimeout(rebuild, 180);
   }
   $: onSettingsChange?.({
     version: 1,
@@ -361,7 +400,7 @@
     metadata: timeline,
     areaHistory: detectionAreaHistoryTimeline,
     minimumAreaHistorySeconds: autoCameraConfig.newAreaDelaySeconds,
-    actionStateByDetection: currentActionRegion.stateByDetection,
+    trustStateByDetection: currentTrustedDetections.stateByDetection,
     view: {
       width: sceneWidth,
       height: sceneHeight,
@@ -412,6 +451,9 @@
   });
 
   onDestroy(() => {
+    if (detectionAreaHistoryBuildTimer !== null) {
+      clearTimeout(detectionAreaHistoryBuildTimer);
+    }
     if (clockRequest !== 0) {
       cancelAnimationFrame(clockRequest);
     }
@@ -1146,24 +1188,20 @@
       duration,
       timeline.lastFrameIndex,
     );
-    const currentSelection = selectActionRegionDetections(
+    const currentSelection = selectTrustedDetections(
       detectionsInAutoCameraEndzone(detections, timeline.manifest.panorama_extent),
       detectionAreaHistoryTimeline,
       autoCameraConfig.newAreaDelaySeconds,
-      virtualAutoCameraPose,
-      autoCameraConfig.actionJoinDistanceDegrees,
     );
     const subjects = autoCameraSubjectsForDetections(currentSelection.included);
     for (const sample of detectionSamplesInFrameRange(timeline, mediaFrame, lookAheadFrame)) {
-      const futureSelection = selectActionRegionDetections(
+      const futureSelection = selectTrustedDetections(
         detectionsInAutoCameraEndzone(
           sample.detections,
           timeline.manifest.panorama_extent,
         ),
         detectionAreaHistoryTimeline,
         autoCameraConfig.newAreaDelaySeconds,
-        virtualAutoCameraPose,
-        autoCameraConfig.actionJoinDistanceDegrees,
       );
       subjects.push(...autoCameraSubjectsForDetections(futureSelection.included));
     }
@@ -1488,7 +1526,7 @@
       frame.metadata,
       frame.areaHistory,
       frame.minimumAreaHistorySeconds,
-      frame.actionStateByDetection,
+      frame.trustStateByDetection,
       frame.view,
     );
     lastDetectionOverlayDrawAt = timestamp;
@@ -1814,16 +1852,16 @@
         <div class="auto-camera-status">
           <span class:active={autoCameraEnabled}></span>
           <strong>{framingDetections.length} / {mappedDetectionCount}</strong>
-          <span>detections in action</span>
+          <span>detections trusted</span>
           <span class="waiting-count">
-            {Math.max(0, mappedDetectionCount - framingDetections.length)} outside
+            {pendingDetectionCount} pending
           </span>
         </div>
 
         <div class="detection-box-legend" aria-label="Detection box colors">
-          <span><i class="included" aria-hidden="true"></i>Included</span>
-          <span><i class="pending" aria-hidden="true"></i>New</span>
-          <span><i class="excluded" aria-hidden="true"></i>Outside</span>
+          <span><i class="included" aria-hidden="true"></i>Trusted</span>
+          <span><i class="pending" aria-hidden="true"></i>Pending</span>
+          <span><i class="excluded" aria-hidden="true"></i>Filtered</span>
         </div>
 
         <div class="auto-control">
@@ -1843,17 +1881,31 @@
         </div>
 
         <div class="auto-control">
-          <span class="control-label">Action reach</span>
+          <span class="control-label">Halo size</span>
           <input
             type="range"
             min="4"
             max="30"
             step="1"
-            value={autoCameraConfig.actionJoinDistanceDegrees}
-            aria-label="Automatic camera action join distance"
-            oninput={(event) => setAutoCameraSetting('actionJoinDistanceDegrees', event)}
+            value={autoCameraConfig.trustHaloRadiusDegrees}
+            aria-label="Trusted detection halo size"
+            oninput={(event) => setAutoCameraSetting('trustHaloRadiusDegrees', event)}
           />
-          <output>{Math.round(autoCameraConfig.actionJoinDistanceDegrees)}°</output>
+          <output>{Math.round(autoCameraConfig.trustHaloRadiusDegrees)}°</output>
+        </div>
+
+        <div class="auto-control">
+          <span class="control-label">Halo memory</span>
+          <input
+            type="range"
+            min="0.5"
+            max="5"
+            step="0.25"
+            value={autoCameraConfig.trustHaloTimeoutSeconds}
+            aria-label="Trusted detection halo memory"
+            oninput={(event) => setAutoCameraSetting('trustHaloTimeoutSeconds', event)}
+          />
+          <output>{autoCameraConfig.trustHaloTimeoutSeconds.toFixed(2)}s</output>
         </div>
 
         <div class="auto-control">

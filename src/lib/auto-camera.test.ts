@@ -10,7 +10,7 @@ import {
   detectionsWithEstablishedArea,
   predictedPlayersAtTime,
   requiredAutoCameraFov,
-  selectActionRegionDetections,
+  selectTrustedDetections,
   stepAutoCamera,
   trackObservationsAtFrame,
   type PredictedPlayer,
@@ -172,7 +172,7 @@ describe('player track timeline', () => {
   });
 });
 
-describe('detection area history', () => {
+describe('detection trust halos', () => {
   it('records persistence before an occupied area becomes established', () => {
     const detectionSamples = [0, 10, 20, 30, 40, 50, 60].map((frameIndex) => ({
       frameIndex,
@@ -200,7 +200,11 @@ describe('detection area history', () => {
       remainingSeconds: 5,
     });
     expect(pending).toEqual({ included: false, historySeconds: 0, remainingSeconds: 5 });
-    expect(included).toEqual({ included: true, historySeconds: 5, remainingSeconds: 0 });
+    expect(included).toEqual({
+      included: true,
+      historySeconds: Number.POSITIVE_INFINITY,
+      remainingSeconds: 0,
+    });
   });
 
   it('restarts the delay when a new area disappears for several samples', () => {
@@ -219,7 +223,7 @@ describe('detection area history', () => {
     expect(detectionsWithEstablishedArea(detectionSamples[5].detections, model, 2)).toHaveLength(1);
   });
 
-  it('trusts both sides at a pull and carries that trust through fast sparse motion', () => {
+  it('trusts every pull detection and carries trust to nearby future detections', () => {
     const pullLeft = detection(-0.7);
     const pullRight = detection(0.7);
     const movedLeft = detection(-0.45);
@@ -251,12 +255,10 @@ describe('detection area history', () => {
       remainingSeconds: 5,
     });
 
-    const selection = selectActionRegionDetections(
+    const selection = selectTrustedDetections(
       detectionSamples[2].detections,
       model,
       5,
-      { yaw: 0, pitch: 0 },
-      4,
     );
     expect(selection.included).toEqual([movedLeft, movedRight]);
     expect(selection.stateByDetection.get(newSidelineArea)).toBe('pending');
@@ -283,136 +285,108 @@ describe('detection area history', () => {
     );
   });
 
-  it('keeps a fast pull-baseline runner trusted near a newer untrusted area', () => {
-    const pullRunner = detection(0);
-    const movedRunner = detection(0.2);
-    const newArea = detection(0.7);
-    const runnerNearNewArea = detection(0.55);
+  it('uses the configured halo radius as a fixed trust boundary', () => {
+    const pullDetection = detection(0);
+    const movedDetection = detection(0.25);
     const detectionSamples = [
-      { frameIndex: 10, detections: [pullRunner] },
-      { frameIndex: 20, detections: [movedRunner, newArea] },
-      { frameIndex: 30, detections: [runnerNearNewArea] },
+      { frameIndex: 0, detections: [pullDetection] },
+      { frameIndex: 10, detections: [movedDetection] },
     ];
-    const model = buildDetectionAreaHistoryTimeline(
-      timeline({ detectionSamples, lastFrameIndex: 39 }),
-      4,
-      [1],
+    const metadata = timeline({ detectionSamples, lastFrameIndex: 19 });
+    const narrowModel = buildDetectionAreaHistoryTimeline(
+      metadata,
+      2,
+      [0],
+      { newAreaDelaySeconds: 5, trustHaloRadiusDegrees: 10, trustHaloTimeoutSeconds: 1.5 },
+    )!;
+    const wideModel = buildDetectionAreaHistoryTimeline(
+      metadata,
+      2,
+      [0],
+      { newAreaDelaySeconds: 5, trustHaloRadiusDegrees: 16, trustHaloTimeoutSeconds: 1.5 },
     )!;
 
-    expect(detectionAreaStatus(newArea, model, 5).included).toBe(false);
-    expect(detectionAreaStatus(runnerNearNewArea, model, 5).historySeconds).toBe(
-      Number.POSITIVE_INFINITY,
-    );
+    expect(detectionAreaStatus(movedDetection, narrowModel, 5).included).toBe(false);
+    expect(detectionAreaStatus(movedDetection, wideModel, 5).included).toBe(true);
   });
 
-  it('keeps separate trusted trails when pull-baseline players spread apart', () => {
-    const left = detection(-0.5);
-    const right = detection(0.5);
+  it('expires old halo positions after the configured memory', () => {
+    const pullDetection = detection(0);
+    const returnedDetection = detection(0.1);
     const detectionSamples = [
-      { frameIndex: 10, detections: [detection(0)] },
-      { frameIndex: 20, detections: [detection(-0.2), detection(0.2)] },
-      { frameIndex: 30, detections: [left, right] },
+      { frameIndex: 0, detections: [pullDetection] },
+      { frameIndex: 10, detections: [] },
+      { frameIndex: 20, detections: [returnedDetection] },
     ];
-    const model = buildDetectionAreaHistoryTimeline(
-      timeline({ detectionSamples, lastFrameIndex: 39 }),
-      4,
-      [1],
+    const metadata = timeline({ detectionSamples, lastFrameIndex: 29 });
+    const shortMemory = buildDetectionAreaHistoryTimeline(
+      metadata,
+      3,
+      [0],
+      { newAreaDelaySeconds: 5, trustHaloRadiusDegrees: 16, trustHaloTimeoutSeconds: 1.5 },
+    )!;
+    const longMemory = buildDetectionAreaHistoryTimeline(
+      metadata,
+      3,
+      [0],
+      { newAreaDelaySeconds: 5, trustHaloRadiusDegrees: 16, trustHaloTimeoutSeconds: 3 },
     )!;
 
-    expect(detectionAreaStatus(left, model, 5).historySeconds).toBe(
-      Number.POSITIVE_INFINITY,
-    );
-    expect(detectionAreaStatus(right, model, 5).historySeconds).toBe(
-      Number.POSITIVE_INFINITY,
-    );
+    expect(detectionAreaStatus(returnedDetection, shortMemory, 5).included).toBe(false);
+    expect(detectionAreaStatus(returnedDetection, longMemory, 5).included).toBe(true);
   });
 
-  it('keeps a persistent remote area outside the connected action region', () => {
-    const actionLeft = detection(-0.08);
-    const actionRight = detection(0.1);
-    const newActionDetection = detection(0.2);
-    const sideline = detection(0.9);
-    const areaHistory = {
-      historyByDetection: new Map<WebDetection, number>([
-        [actionLeft, 8],
-        [actionRight, 8],
-        [newActionDetection, 0],
-        [sideline, 20],
-      ]),
-    };
+  it('keeps old positions as independent trail halos while they remain alive', () => {
+    const pullDetection = detection(0);
+    const movedDetection = detection(0.1);
+    const returnedDetection = detection(-0.08);
+    const detectionSamples = [
+      { frameIndex: 0, detections: [pullDetection] },
+      { frameIndex: 10, detections: [movedDetection] },
+      { frameIndex: 20, detections: [returnedDetection] },
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 29 }),
+      3,
+      [0],
+      { newAreaDelaySeconds: 5, trustHaloRadiusDegrees: 8, trustHaloTimeoutSeconds: 2.5 },
+    )!;
 
-    const selection = selectActionRegionDetections(
-      [actionLeft, actionRight, newActionDetection, sideline],
-      areaHistory,
+    expect(detectionAreaStatus(movedDetection, model, 5).included).toBe(true);
+    expect(detectionAreaStatus(returnedDetection, model, 5).included).toBe(true);
+  });
+
+  it('promotes a persistent remote area before allowing it to produce halos', () => {
+    const remoteDetections = [1, 1.02, 1.04, 1.2].map((yaw) => detection(yaw));
+    const detectionSamples = [
+      { frameIndex: 0, detections: [detection(0)] },
+      ...remoteDetections.map((item, index) => ({
+        frameIndex: (index + 1) * 10,
+        detections: [item],
+      })),
+    ];
+    const model = buildDetectionAreaHistoryTimeline(
+      timeline({ detectionSamples, lastFrameIndex: 49 }),
       5,
-      { yaw: 0, pitch: 0 },
-      16,
-    );
+      [0],
+      { newAreaDelaySeconds: 2, trustHaloRadiusDegrees: 16, trustHaloTimeoutSeconds: 1.5 },
+    )!;
 
-    expect(selection.included).toEqual([actionLeft, actionRight, newActionDetection]);
-    expect(selection.stateByDetection.get(newActionDetection)).toBe('included');
-    expect(selection.stateByDetection.get(sideline)).toBe('excluded');
+    expect(detectionAreaStatus(remoteDetections[0], model, 2).included).toBe(false);
+    expect(detectionAreaStatus(remoteDetections[1], model, 2).included).toBe(false);
+    expect(detectionAreaStatus(remoteDetections[2], model, 2).included).toBe(true);
+    expect(detectionAreaStatus(remoteDetections[3], model, 2).included).toBe(true);
   });
 
-  it('keeps a disconnected new area pending instead of using the camera FOV', () => {
-    const action = detection(0);
-    const sideline = detection(0.8);
-    const areaHistory = {
-      historyByDetection: new Map<WebDetection, number>([
-        [action, 8],
-        [sideline, 1],
-      ]),
-    };
-
-    const selection = selectActionRegionDetections(
-      [action, sideline],
-      areaHistory,
-      5,
-      { yaw: 0, pitch: 0 },
-      16,
-    );
-
-    expect(selection.included).toEqual([action]);
-    expect(selection.stateByDetection.get(sideline)).toBe('pending');
-  });
-
-  it('does not let a new detection closer to the camera replace established action', () => {
-    const sideline = detection(0);
-    const actionLeft = detection(0.35);
-    const actionRight = detection(0.43);
-    const areaHistory = {
-      historyByDetection: new Map<WebDetection, number>([
-        [sideline, 0],
-        [actionLeft, 8],
-        [actionRight, 8],
-      ]),
-    };
-
-    const selection = selectActionRegionDetections(
-      [sideline, actionLeft, actionRight],
-      areaHistory,
-      5,
-      { yaw: 0, pitch: 0 },
-      6,
-    );
-
-    expect(selection.included).toEqual([actionLeft, actionRight]);
-    expect(selection.stateByDetection.get(sideline)).toBe('pending');
-  });
-
-  it('does not impose a player-count limit on one connected action component', () => {
+  it('does not impose a player-count limit on trusted detections', () => {
     const detections = Array.from({ length: 24 }, (_, index) => detection(-0.46 + index * 0.04));
     const areaHistory = {
-      historyByDetection: new Map(detections.map((item) => [item, 8])),
+      historyByDetection: new Map(
+        detections.map((item) => [item, Number.POSITIVE_INFINITY]),
+      ),
     };
 
-    const selection = selectActionRegionDetections(
-      detections,
-      areaHistory,
-      5,
-      { yaw: 0, pitch: 0 },
-      8,
-    );
+    const selection = selectTrustedDetections(detections, areaHistory, 5);
 
     expect(selection.included).toHaveLength(24);
   });

@@ -1,7 +1,7 @@
 import {
   detectionAreaStatus,
-  type ActionRegionDetectionState,
   type DetectionAreaHistoryTimeline,
+  type DetectionTrustState,
 } from './auto-camera';
 import {
   panoramaToNormalized,
@@ -50,7 +50,7 @@ export function drawDetectionOverlay(
   metadata: MetadataTimeline | null,
   areaHistory: DetectionAreaHistoryTimeline | null,
   minimumAreaHistorySeconds: number,
-  actionStateByDetection: Map<WebDetection, ActionRegionDetectionState>,
+  trustStateByDetection: Map<WebDetection, DetectionTrustState>,
   view: DetectionOverlayView,
 ): void {
   const { width, height } = view;
@@ -94,14 +94,14 @@ export function drawDetectionOverlay(
       areaHistory,
       minimumAreaHistorySeconds,
     );
-    const actionState = actionStateByDetection.get(detection) ?? 'excluded';
-    return [{ detection, position, areaStatus, actionState }];
+    const trustState = trustStateByDetection.get(detection) ?? 'excluded';
+    return [{ detection, position, areaStatus, trustState }];
   });
   const boxFovScale = view.perspectiveMode
     ? detectionBoxFovScale(view.visibleCamera.fovDegrees)
     : 1;
 
-  for (const { detection, position, areaStatus, actionState } of overlays) {
+  for (const { detection, position, areaStatus, trustState } of overlays) {
     // Exported box sizes remain camera-normalized until projected corners join the sidecar.
     const boxWidth = Math.max(
       10 / view.zoom,
@@ -114,9 +114,9 @@ export function drawDetectionOverlay(
     const left = position.x - boxWidth / 2;
     const top = position.y - boxHeight / 2;
     const color =
-      actionState === 'included'
+      trustState === 'included'
         ? INCLUDED_DETECTION_COLOR
-        : actionState === 'pending'
+        : trustState === 'pending'
           ? PENDING_DETECTION_COLOR
           : EXCLUDED_DETECTION_COLOR;
 
@@ -124,9 +124,9 @@ export function drawDetectionOverlay(
     context.strokeStyle = color;
     context.lineWidth = 2 / view.zoom;
     context.setLineDash(
-      actionState === 'included'
+      trustState === 'included'
         ? []
-        : actionState === 'pending'
+        : trustState === 'pending'
           ? [6 / view.zoom, 4 / view.zoom]
           : [2 / view.zoom, 4 / view.zoom],
     );
@@ -135,11 +135,11 @@ export function drawDetectionOverlay(
 
     const confidence = `${Math.round(detection.confidence * 100)}%`;
     const label =
-      actionState === 'included'
+      trustState === 'included'
         ? confidence
-        : actionState === 'pending'
+        : trustState === 'pending'
           ? `NEW  ${areaStatus.remainingSeconds.toFixed(1)}s  ${confidence}`
-          : `OUTSIDE ACTION  ${confidence}`;
+          : `FILTERED  ${confidence}`;
     const fontSize = 12 / view.zoom;
     const labelPadding = 5 / view.zoom;
     context.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;

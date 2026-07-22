@@ -5,7 +5,7 @@ import { GameTrackingRepository } from '$lib/server/game-tracking';
 import { TournamentRepository } from '$lib/server/tournaments';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ params }) => {
+export const load: PageServerLoad = ({ params, url }) => {
   const tournamentId = Number(params.id);
   if (!Number.isSafeInteger(tournamentId) || tournamentId <= 0) error(404, 'Event not found.');
   const tournaments = new TournamentRepository();
@@ -32,6 +32,7 @@ export const load: PageServerLoad = ({ params }) => {
   return {
     tournament,
     rosterId: roster.id,
+    focusedGameToken: url.searchParams.get('game'),
     statistics: totals,
     games: summaries.map((game) => {
       const stats = statisticsByGameId.get(game.id) ?? null;
