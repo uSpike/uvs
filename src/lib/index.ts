@@ -1,13 +1,13 @@
-/** Reusable Reco panorama video viewer component. */
-export { default as RecoVideoViewer } from './RecoVideoViewer.svelte';
+/** Reusable Ultimate Video Stats panorama video viewer component. */
+export { default as UVSVideoViewer } from './UVSVideoViewer.svelte';
 export type {
-  RecoVideoViewerSource,
-  RecoViewerPlaybackState,
-  RecoViewerPlaybackMarker,
-  RecoViewerSpatialMarker,
-  RecoViewerSpatialPoint,
-  RecoViewerStatus,
-  RecoViewerViewState,
+  UVSVideoViewerSource,
+  UVSViewerPlaybackState,
+  UVSViewerPlaybackMarker,
+  UVSViewerSpatialMarker,
+  UVSViewerSpatialPoint,
+  UVSViewerStatus,
+  UVSViewerViewState,
   GameViewerSettings,
 } from './viewer-types';
 export {

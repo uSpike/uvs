@@ -27,7 +27,7 @@ interface TeamCredentialRow {
   password_version: number;
 }
 
-const SESSION_COOKIE = 'reco_role_session';
+const SESSION_COOKIE = 'uvs_role_session';
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
 const SCRYPT_COST = 16_384;
 const SCRYPT_BLOCK_SIZE = 8;
@@ -185,7 +185,7 @@ function derivePasswordKey(password: string, salt: Buffer): Buffer {
 }
 
 function sign(encodedPayload: string): string {
-  return createHmac('sha256', configuredSecret('SESSION_SECRET', 'reco-development-secret'))
+  return createHmac('sha256', configuredSecret('SESSION_SECRET', 'uvs-development-secret'))
     .update(encodedPayload)
     .digest('base64url');
 }

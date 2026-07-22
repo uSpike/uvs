@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const DATABASE_VERSION = 15;
 
 let applicationDatabase: Database.Database | null = null;
 
-/** Open, configure, and migrate a Reco application database. */
+/** Open, configure, and migrate an Ultimate Video Stats application database. */
 export function openDatabase(filename: string): Database.Database {
   if (filename !== ':memory:') {
     mkdirSync(dirname(resolve(filename)), { recursive: true });
@@ -25,9 +25,27 @@ export function openDatabase(filename: string): Database.Database {
 /** Return the process-wide application database. */
 export function getDatabase(): Database.Database {
   if (!applicationDatabase) {
-    applicationDatabase = openDatabase(process.env.RECO_DATABASE_PATH ?? './data/reco-web.sqlite');
+    applicationDatabase = openDatabase(resolveApplicationDatabasePath());
   }
   return applicationDatabase;
+}
+
+/** Resolve the renamed database setting without hiding an existing installation's data. */
+export function resolveApplicationDatabasePath(
+  environment: NodeJS.ProcessEnv = process.env,
+  fileExists: (filename: string) => boolean = existsSync,
+): string {
+  const configuredPath = environment.UVS_DATABASE_PATH?.trim();
+  if (configuredPath) return configuredPath;
+
+  const previousConfiguredPath = environment.RECO_DATABASE_PATH?.trim();
+  if (previousConfiguredPath) return previousConfiguredPath;
+
+  const defaultPath = './data/ultimate-video-stats.sqlite';
+  const previousDefaultPath = './data/reco-web.sqlite';
+  return fileExists(defaultPath) || !fileExists(previousDefaultPath)
+    ? defaultPath
+    : previousDefaultPath;
 }
 
 /** Apply all database migrations supported by this application version. */

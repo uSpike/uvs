@@ -92,7 +92,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.setup.name} seasons - Reco Games</title>
+  <title>{data.setup.name} seasons - Ultimate Video Stats</title>
 </svelte:head>
 
 <div class="setup-page">
@@ -681,7 +681,7 @@
                   <input
                     name="videoSource"
                     inputmode="url"
-                    placeholder="file:///srv/reco/game.mp4"
+                    placeholder="file:///srv/uvs/game.mp4"
                     value={gameFormValues?.videoSource ?? ''}
                     required
                   />

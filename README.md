@@ -1,8 +1,8 @@
-# Reco Games Web Application
+# Ultimate Video Stats
 
-SvelteKit application for organizing Reco panorama exports by team, recording
+SvelteKit application for organizing panorama exports by team, recording
 timecoded game statistics, and viewing video through the reusable
-`RecoVideoViewer` component. SQLite stores teams, season rosters, tournaments,
+`UVSVideoViewer` component. SQLite stores teams, season rosters, tournaments,
 lines, editable point timelines, metadata, and camera settings.
 
 ## Run locally
@@ -15,7 +15,9 @@ npm run dev
 The development administrator password is `admin`. Production requires
 `ADMIN_PASSWORD` and `SESSION_SECRET`; see `.env.example`. Administrators set a
 shared, hashed player password when creating each team. The database defaults
-to `data/reco-web.sqlite` and is migrated automatically.
+to `data/ultimate-video-stats.sqlite` and is migrated automatically.
+Existing installations continue to discover the previous database environment
+setting and default filename so the branding change does not hide stored data.
 
 ## Access and data
 
@@ -99,12 +101,12 @@ unused middle of the gap.
 Drag to pan and use the mouse wheel or transport controls to zoom.
 
 Enable **Undistort** to render the angular panorama through a rectilinear camera
-that fills the viewer while matching Reco's normal vertical-FOV convention. In
+that fills the viewer while matching the source renderer's vertical-FOV convention. In
 this mode, dragging changes camera yaw/pitch and the FOV slider or mouse wheel
 controls the lens. Autocamera framing uses the viewer's live aspect ratio.
 The camera-orientation control adjusts rig tilt and roll. Schema v3 exports
-initialize those controls from Reco's calibration so panning uses the same
-leveled camera frame as a normal Reco render. The perspective renderer requires
+initialize those controls from the panorama calibration so panning uses the same
+leveled camera frame as the source render. The perspective renderer requires
 WebGL 2.
 
 Enable **Auto camera** to frame the active players automatically. The viewer
@@ -141,7 +143,7 @@ requested time.
 
 ## Reusable component
 
-`RecoVideoViewer` can be embedded in a game, statistics, or multi-video app.
+`UVSVideoViewer` can be embedded in a game, statistics, or multi-video app.
 The parent selects the active game and owns the video URL; the viewer owns
 playback, panorama projection, overlays, and camera controls.
 
@@ -149,13 +151,13 @@ playback, panorama projection, overlays, and camera controls.
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    RecoVideoViewer,
+    UVSVideoViewer,
     type MetadataTimeline,
-    type RecoVideoViewerSource,
-    type RecoViewerPlaybackState,
+    type UVSVideoViewerSource,
+    type UVSViewerPlaybackState,
   } from '$lib';
 
-  let source: RecoVideoViewerSource | null = null;
+  let source: UVSVideoViewerSource | null = null;
 
   async function loadGame(): Promise<void> {
     const response = await fetch('/api/games/game-token/metadata');
@@ -171,13 +173,13 @@ playback, panorama projection, overlays, and camera controls.
     void loadGame();
   });
 
-  function syncGameTimeline(state: RecoViewerPlaybackState): void {
+  function syncGameTimeline(state: UVSViewerPlaybackState): void {
     // Update statistics and game events for state.currentTime.
   }
 </script>
 
 <div class="video-pane">
-  <RecoVideoViewer {source} onPlaybackChange={syncGameTimeline} />
+  <UVSVideoViewer {source} onPlaybackChange={syncGameTimeline} />
 </div>
 
 <style>

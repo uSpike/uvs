@@ -10,7 +10,7 @@
   const pct = (won: number, played: number): string => played ? `${Math.round(won / played * 100)}%` : '—';
 </script>
 
-<svelte:head><title>{data.player.name} stats - Reco Games</title></svelte:head>
+<svelte:head><title>{data.player.name} stats - Ultimate Video Stats</title></svelte:head>
 
 <div class="player-page">
   <a class="back-link" href={`/teams/${data.team.slug}`}><ArrowLeft size={15} />{data.team.name}</a>

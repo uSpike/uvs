@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 async function videoFixture(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'reco-video-source-'));
+  const directory = await mkdtemp(join(tmpdir(), 'uvs-video-source-'));
   temporaryDirectories.push(directory);
   const filename = join(directory, 'game.webm');
   await writeFile(filename, Buffer.from('0123456789'));
@@ -24,7 +24,7 @@ async function videoFixture(): Promise<string> {
 }
 
 async function largeVideoFixture(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'reco-video-source-'));
+  const directory = await mkdtemp(join(tmpdir(), 'uvs-video-source-'));
   temporaryDirectories.push(directory);
   const filename = join(directory, 'game.mp4');
   await writeFile(filename, Buffer.alloc(256 * 1024, 7));

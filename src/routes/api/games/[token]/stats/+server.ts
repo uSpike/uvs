@@ -24,7 +24,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 export const POST: RequestHandler = async ({ request, params, locals }) => {
   requireGameAccess(locals, params.token);
   try {
-    requireEditorLock(params.token, request.headers.get('x-reco-edit-token'));
+    requireEditorLock(params.token, request.headers.get('x-uvs-edit-token'));
     const body = await request.json() as Record<string, unknown>;
     const operation = String(body.operation ?? '');
     const repository = new GameTrackingRepository();

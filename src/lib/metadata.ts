@@ -201,7 +201,7 @@ function parseManifest(value: unknown, line: number): WebManifest {
   const yAxis = stringAt(manifest.video_y_axis, 'manifest.video_y_axis', line);
 
   if (schemaVersion < 2 || exportMode !== 'web_panorama') {
-    throw new MetadataParseError('metadata is not a Reco web panorama export (schema 2+)', line);
+    throw new MetadataParseError('metadata is not a supported web panorama export (schema 2+)', line);
   }
   if (projection !== 'angular_rectangular' || yAxis !== 'pitch_max_to_pitch_min') {
     throw new MetadataParseError(`unsupported panorama projection: ${projection}/${yAxis}`, line);

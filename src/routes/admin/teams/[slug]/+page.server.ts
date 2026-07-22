@@ -89,7 +89,7 @@ export const actions: Actions = {
     if (values.hasVideo && (!(metadataFile instanceof File) || metadataFile.size === 0)) {
       return fail(400, {
         action: 'createGame',
-        error: 'Select a Reco metadata JSONL file.',
+        error: 'Select a panorama metadata JSONL file.',
         values,
       });
     }

@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.team.name} - Reco Games</title>
+  <title>{data.team.name} - Ultimate Video Stats</title>
 </svelte:head>
 
 <section class="games-page">

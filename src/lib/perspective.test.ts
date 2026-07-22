@@ -33,7 +33,7 @@ describe('perspective projection', () => {
     expect(projectPanoramaPoint({ yaw: 0, pitch: 0 }, camera)).toEqual({ x: 0.5, y: 0.5 });
   });
 
-  it('matches Reco yaw orientation across the frame', () => {
+  it('matches source panorama yaw orientation across the frame', () => {
     const lowerYaw = projectPanoramaPoint({ yaw: -0.2, pitch: 0 }, camera);
     const higherYaw = projectPanoramaPoint({ yaw: 0.2, pitch: 0 }, camera);
     expect(lowerYaw?.x).toBeGreaterThan(0.5);

@@ -114,8 +114,10 @@ thead th[title] {
   white-space: nowrap;
 }
 
-.application-brand svg {
-  color: #d89500;
+.application-brand-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
 }
 
 .application-header nav {

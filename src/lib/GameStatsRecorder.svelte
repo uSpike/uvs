@@ -21,7 +21,7 @@
   } from '@lucide/svelte';
   import { autoCameraEndzoneAtTime, autoSkipTargetTimeMs, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
   import type { GameRecordingMode } from './game-settings';
-  import type { RecoViewerSpatialMarker, RecoViewerSpatialPoint } from './viewer-types';
+  import type { UVSViewerSpatialMarker, UVSViewerSpatialPoint } from './viewer-types';
   import { gameEventLabel } from './game-events';
   import type { MatchupRole } from './matchup';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
@@ -59,7 +59,7 @@
     recordingMode: GameRecordingMode;
     onSpatialStateChange: (state: {
       placementActive: boolean;
-      markers: RecoViewerSpatialMarker[];
+      markers: UVSViewerSpatialMarker[];
     }) => void;
     onHighlightOverlayChange: (overlay: {
       description: string;
@@ -374,7 +374,7 @@
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-reco-edit-token': lockToken,
+          'x-uvs-edit-token': lockToken,
         },
         body: JSON.stringify(body),
       });
@@ -567,7 +567,7 @@
   }
 
   /** Accept a manual panorama point placed by the video viewer. */
-  export function placeSpatialPoint(point: RecoViewerSpatialPoint): void {
+  export function placeSpatialPoint(point: UVSViewerSpatialPoint): void {
     if (!spatialDraft || spatialDraftStage !== 'place_primary') return;
     spatialAnnotations = [...spatialAnnotations, {
       role: 'handler',
@@ -586,7 +586,7 @@
   }
 
   /** Move a draft manual marker without changing its selected frame or time. */
-  export function adjustSpatialPoint(index: number, point: RecoViewerSpatialPoint): void {
+  export function adjustSpatialPoint(index: number, point: UVSViewerSpatialPoint): void {
     const existing = spatialAnnotations[index];
     if (!existing) return;
     spatialAnnotations = spatialAnnotations.map((annotation, annotationIndex) =>
@@ -604,7 +604,7 @@
     emitSpatialState(false);
   }
 
-  function spatialPopoverPosition(point: Pick<RecoViewerSpatialPoint, 'clientX' | 'clientY'>): { left: number; top: number } {
+  function spatialPopoverPosition(point: Pick<UVSViewerSpatialPoint, 'clientX' | 'clientY'>): { left: number; top: number } {
     return {
       left: Math.max(12, Math.min(window.innerWidth - 332, point.clientX + 14)),
       top: Math.max(12, Math.min(window.innerHeight - 430, point.clientY + 14)),

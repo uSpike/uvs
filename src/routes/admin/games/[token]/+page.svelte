@@ -25,7 +25,7 @@
 </script>
 
 <svelte:head>
-  <title>Edit {data.game.title} - Reco Games</title>
+  <title>Edit {data.game.title} - Ultimate Video Stats</title>
 </svelte:head>
 
 <div class="game-editor-page">

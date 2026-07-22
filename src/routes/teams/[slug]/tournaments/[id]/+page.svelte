@@ -45,7 +45,7 @@
   </section>
 {/snippet}
 
-<svelte:head><title>{data.tournament.name} stats - Reco Games</title></svelte:head>
+<svelte:head><title>{data.tournament.name} stats - Ultimate Video Stats</title></svelte:head>
 
 <div class="stats-page">
   <a class="back-link" href={`/teams/${data.tournament.teamSlug}`}><ArrowLeft size={15} />{data.tournament.teamName}</a>

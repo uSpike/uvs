@@ -1,5 +1,5 @@
 <script lang="ts">
-  import './reco-video-viewer.css';
+  import './uvs-video-viewer.css';
   import {
     AlertCircle,
     Braces,
@@ -63,13 +63,13 @@
   import { canvasPixelRatio } from './render-resolution';
   import type {
     GameViewerSettings,
-    RecoVideoViewerSource,
-    RecoViewerPlaybackMarker,
-    RecoViewerPlaybackState,
-    RecoViewerSpatialMarker,
-    RecoViewerSpatialPoint,
-    RecoViewerStatus,
-    RecoViewerViewState,
+    UVSVideoViewerSource,
+    UVSViewerPlaybackMarker,
+    UVSViewerPlaybackState,
+    UVSViewerSpatialMarker,
+    UVSViewerSpatialPoint,
+    UVSViewerStatus,
+    UVSViewerViewState,
   } from './viewer-types';
   import type { TeamEndzone } from './game-stats';
 
@@ -108,19 +108,19 @@
   }
 
   /** Parent-owned video and metadata. Local file controls are disabled while set. */
-  export let source: RecoVideoViewerSource | null = null;
+  export let source: UVSVideoViewerSource | null = null;
   /** Allow this component to create local object URLs through its file controls. */
   export let allowLocalFiles = false;
   /** Compact product label shown in the viewer toolbar. */
-  export let title = 'Reco Viewer';
+  export let title = 'UVS Viewer';
   /** Persisted game-level camera and automatic panner configuration. */
   export let settings: GameViewerSettings | null = null;
   /** Playback callback for synchronizing game timelines and statistics. */
-  export let onPlaybackChange: ((state: RecoViewerPlaybackState) => void) | undefined = undefined;
+  export let onPlaybackChange: ((state: UVSViewerPlaybackState) => void) | undefined = undefined;
   /** Visible camera callback for embedding applications that persist operator state. */
-  export let onViewChange: ((state: RecoViewerViewState) => void) | undefined = undefined;
+  export let onViewChange: ((state: UVSViewerViewState) => void) | undefined = undefined;
   /** Readiness and diagnostics callback for application-level error handling. */
-  export let onStatusChange: ((status: RecoViewerStatus) => void) | undefined = undefined;
+  export let onStatusChange: ((status: UVSViewerStatus) => void) | undefined = undefined;
   /** Settings callback used by administrative save controls. */
   export let onSettingsChange: ((settings: GameViewerSettings) => void) | undefined = undefined;
   /** Optional persistence action rendered beside the camera controls. */
@@ -132,14 +132,14 @@
   /** Whether the next primary click should place a manual event annotation. */
   export let spatialPlacementActive = false;
   /** Draft manual annotations displayed on their selected video frames. */
-  export let spatialMarkers: RecoViewerSpatialMarker[] = [];
+  export let spatialMarkers: UVSViewerSpatialMarker[] = [];
   /** Saved action positions that may briefly pulse during ordinary playback. */
-  export let playbackMarkers: RecoViewerPlaybackMarker[] = [];
+  export let playbackMarkers: UVSViewerPlaybackMarker[] = [];
   /** Callback fired when the operator manually marks a position on the video. */
-  export let onSpatialPointPlace: ((point: RecoViewerSpatialPoint) => void) | undefined = undefined;
+  export let onSpatialPointPlace: ((point: UVSViewerSpatialPoint) => void) | undefined = undefined;
   /** Callback fired while an existing draft marker is dragged to a more precise position. */
   export let onSpatialPointAdjust:
-    | ((index: number, point: RecoViewerSpatialPoint) => void)
+    | ((index: number, point: UVSViewerSpatialPoint) => void)
     | undefined = undefined;
 
   let videoInput: HTMLInputElement;
@@ -217,7 +217,7 @@
   let showPlaybackMarkers = false;
   let clockRequest = 0;
   let mounted = false;
-  let appliedSource: RecoVideoViewerSource | null = null;
+  let appliedSource: UVSVideoViewerSource | null = null;
   let appliedSettings: GameViewerSettings | null = null;
   let externalSourceActive = false;
   let pendingInitialTime: number | null = null;
@@ -524,7 +524,7 @@
   }
 
   /** Return the latest playback snapshot synchronously. */
-  export function getPlaybackState(): RecoViewerPlaybackState {
+  export function getPlaybackState(): UVSViewerPlaybackState {
     return { currentTime, duration, playing, frameIndex: currentFrame };
   }
 
@@ -572,7 +572,7 @@
     );
   }
 
-  function syncExternalSource(nextSource: RecoVideoViewerSource | null): void {
+  function syncExternalSource(nextSource: UVSVideoViewerSource | null): void {
     appliedSource = nextSource;
     if (!nextSource) {
       if (!externalSourceActive) {
@@ -605,7 +605,7 @@
     loadError = '';
     loadWarning = '';
     const metadata = nextSource.metadata ?? null;
-    applyMetadata(metadata, nextSource.metadataName ?? 'Reco metadata');
+    applyMetadata(metadata, nextSource.metadataName ?? 'panorama metadata');
     appliedSettings = null;
     resetPanoramaView();
     if (!metadata) {
@@ -687,7 +687,7 @@
       return;
     }
     if (!isMetadataFile(file)) {
-      loadError = `${file.name} is not a Reco metadata sidecar.`;
+      loadError = `${file.name} is not a supported panorama metadata sidecar.`;
       return;
     }
 
@@ -720,7 +720,7 @@
       void loadMetadata(metadata);
     }
     if (!video && !metadata) {
-      loadError = 'No supported video or Reco metadata sidecar was dropped.';
+      loadError = 'No supported video or panorama metadata sidecar was dropped.';
     }
   }
 
@@ -911,7 +911,7 @@
     }
   }
 
-  function spatialPointAtClient(clientX: number, clientY: number): RecoViewerSpatialPoint | null {
+  function spatialPointAtClient(clientX: number, clientY: number): UVSViewerSpatialPoint | null {
     if (!timeline || !viewportElement) return null;
     const rect = viewportElement.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
@@ -951,7 +951,7 @@
     };
   }
 
-  function spatialMarkerPosition(point: RecoViewerSpatialPoint): { x: number; y: number } | null {
+  function spatialMarkerPosition(point: UVSViewerSpatialPoint): { x: number; y: number } | null {
     if (!timeline || point.frameIndex !== currentFrame) return null;
     return panoramaMarkerPosition(point.panoramaYaw, point.panoramaPitch);
   }
@@ -1593,7 +1593,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (focus scopes shortcuts to this viewer) -->
 <div
   bind:this={rootElement}
-  class="reco-video-viewer"
+  class="uvs-video-viewer"
   role="region"
   aria-label={`${title} video viewer`}
   tabindex="-1"
@@ -1614,7 +1614,7 @@
           onchange={selectVideo}
         />
       </label>
-      <label class="command" title="Open Reco metadata sidecar">
+      <label class="command" title="Open panorama metadata sidecar">
         <Braces size={17} aria-hidden="true" />
         <span>{metadataName || 'Open metadata'}</span>
         <input

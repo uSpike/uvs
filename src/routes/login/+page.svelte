@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign in - Reco Games</title>
+  <title>Sign in - Ultimate Video Stats</title>
 </svelte:head>
 
 <section class="auth-page">

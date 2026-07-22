@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-  <title>Admin - Reco Games</title>
+  <title>Admin - Ultimate Video Stats</title>
 </svelte:head>
 
 <div class="admin-page">

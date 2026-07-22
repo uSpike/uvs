@@ -2,7 +2,7 @@ import type { MetadataTimeline } from './metadata';
 import type { GameViewerSettings } from './game-settings';
 
 /** A manual selection on a specific video frame, expressed in stable panorama coordinates. */
-export interface RecoViewerSpatialPoint {
+export interface UVSViewerSpatialPoint {
   timeMs: number;
   frameIndex: number;
   panoramaYaw: number;
@@ -12,13 +12,13 @@ export interface RecoViewerSpatialPoint {
 }
 
 /** A draft spatial point rendered over the video while composing an event. */
-export interface RecoViewerSpatialMarker {
+export interface UVSViewerSpatialMarker {
   label: string;
-  point: RecoViewerSpatialPoint;
+  point: UVSViewerSpatialPoint;
 }
 
 /** A saved event position that can briefly pulse during ordinary playback. */
-export interface RecoViewerPlaybackMarker {
+export interface UVSViewerPlaybackMarker {
   id: string;
   label: string;
   detail: string;
@@ -30,10 +30,10 @@ export interface RecoViewerPlaybackMarker {
 }
 
 /** Video and metadata selected by an application that embeds the viewer. */
-export interface RecoVideoViewerSource {
+export interface UVSVideoViewerSource {
   /** Stable URL for the panorama video. The embedding application owns its lifetime. */
   videoUrl: string;
-  /** Parsed Reco metadata for the video, when available. */
+  /** Parsed panorama metadata for the video, when available. */
   metadata?: MetadataTimeline | null;
   /** User-facing video label. */
   videoName?: string;
@@ -44,7 +44,7 @@ export interface RecoVideoViewerSource {
 }
 
 /** Playback state emitted for synchronization with game statistics and timelines. */
-export interface RecoViewerPlaybackState {
+export interface UVSViewerPlaybackState {
   /** Current media time in seconds. */
   currentTime: number;
   /** Loaded media duration in seconds. */
@@ -56,7 +56,7 @@ export interface RecoViewerPlaybackState {
 }
 
 /** Visible camera state emitted when the operator changes the view. */
-export interface RecoViewerViewState {
+export interface UVSViewerViewState {
   /** Whether the rectilinear panorama projection is active. */
   perspectiveMode: boolean;
   /** Whether the virtual automatic camera controls the visible view. */
@@ -72,10 +72,10 @@ export interface RecoViewerViewState {
 }
 
 /** Source readiness and load diagnostics emitted by the viewer. */
-export interface RecoViewerStatus {
+export interface UVSViewerStatus {
   /** Whether a video URL is loaded. */
   hasVideo: boolean;
-  /** Whether parsed Reco metadata is loaded. */
+  /** Whether parsed panorama metadata is loaded. */
   hasMetadata: boolean;
   /** Whether both sources and video duration are available. */
   ready: boolean;

@@ -1,15 +1,15 @@
 <script lang="ts">
   import '../app.css';
-  import { Crosshair, LogIn, LogOut, Shield, Users } from '@lucide/svelte';
+  import { LogIn, LogOut, Shield, Users } from '@lucide/svelte';
 
   let { data, children } = $props();
 </script>
 
 <svelte:head>
-  <title>Reco Games</title>
+  <title>Ultimate Video Stats</title>
   <meta
     name="description"
-    content="Team game library and interactive panorama viewer for Reco exports."
+    content="Team game library, statistics recorder, and interactive panorama viewer."
   />
 </svelte:head>
 
@@ -20,8 +20,8 @@
       class="application-brand"
       href={data.role === 'admin' ? '/admin' : data.role === 'player' ? `/teams/${data.teamSlug}` : '/login'}
     >
-      <Crosshair size={20} strokeWidth={2.2} aria-hidden="true" />
-      <span>Reco Games</span>
+      <img class="application-brand-mark" src="/favicon.svg" alt="" />
+      <span>Ultimate Video Stats</span>
     </a>
 
     <nav aria-label="Application navigation">

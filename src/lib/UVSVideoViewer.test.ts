@@ -1,13 +1,13 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import RecoVideoViewer from './RecoVideoViewer.svelte';
+import UVSVideoViewer from './UVSVideoViewer.svelte';
 
-describe('RecoVideoViewer', () => {
+describe('UVSVideoViewer', () => {
   it('renders local file controls only when explicitly enabled', () => {
-    const embedded = render(RecoVideoViewer, {
+    const embedded = render(UVSVideoViewer, {
       props: { title: 'Game footage' },
     });
-    const standalone = render(RecoVideoViewer, {
+    const standalone = render(UVSVideoViewer, {
       props: { allowLocalFiles: true },
     });
 
@@ -19,7 +19,7 @@ describe('RecoVideoViewer', () => {
   });
 
   it('renders a parent-managed source without exposing file pickers', () => {
-    const result = render(RecoVideoViewer, {
+    const result = render(UVSVideoViewer, {
       props: {
         allowLocalFiles: true,
         source: {
@@ -36,7 +36,7 @@ describe('RecoVideoViewer', () => {
   });
 
   it('offers automatic camera resume as a separate playback preference', () => {
-    const result = render(RecoVideoViewer);
+    const result = render(UVSVideoViewer);
 
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
@@ -46,7 +46,7 @@ describe('RecoVideoViewer', () => {
   });
 
   it('does not expose internal frame and FOV diagnostics', () => {
-    const result = render(RecoVideoViewer);
+    const result = render(UVSVideoViewer);
 
     expect(result.body).not.toContain('Show video details');
     expect(result.body).not.toContain('Show frame, detection, and FOV details');

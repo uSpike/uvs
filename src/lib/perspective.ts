@@ -142,7 +142,7 @@ function worldToRenderPose(
   };
 }
 
-/** Build the same tilt/roll-aware camera frame used by Reco's normal renderer. */
+/** Build the same tilt/roll-aware camera frame used by the source panorama renderer. */
 export function perspectiveCameraBasis(camera: PerspectiveCamera): PerspectiveCameraBasis {
   const frame = rigFrame(camera.tilt, camera.roll);
   const renderPose = worldToRenderPose(
@@ -157,7 +157,7 @@ export function perspectiveCameraBasis(camera: PerspectiveCamera): PerspectiveCa
   const up = normalize(rotateAroundAxis(frame.up, pitchAxis, renderPose.pitch));
   return {
     forward,
-    // Reco's positive yaw turns left, so screen-right points toward lower yaw.
+    // The source panorama's positive yaw turns left, so screen-right points toward lower yaw.
     right: normalize(cross(forward, up)),
     up,
   };
@@ -186,7 +186,7 @@ export function panoramaCenter(extent: PanoramaExtent): { yaw: number; pitch: nu
 }
 
 /**
- * Test a world-yaw point against a displayed side. Reco's positive yaw turns
+ * Test a world-yaw point against a displayed side. The source panorama's positive yaw turns
  * left, so the rendered horizontal direction is the inverse of yaw order.
  */
 export function panoramaPointIsOnDisplaySide(

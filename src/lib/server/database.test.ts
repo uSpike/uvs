@@ -1,6 +1,25 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { migrateDatabase } from './database';
+import { migrateDatabase, resolveApplicationDatabasePath } from './database';
+
+describe('database path', () => {
+  it('prefers the UVS setting over the previous setting', () => {
+    expect(resolveApplicationDatabasePath({
+      UVS_DATABASE_PATH: '/data/uvs.sqlite',
+      RECO_DATABASE_PATH: '/data/previous.sqlite',
+    })).toBe('/data/uvs.sqlite');
+  });
+
+  it('continues using an existing database at the previous default path', () => {
+    expect(resolveApplicationDatabasePath({}, (filename) => filename === './data/reco-web.sqlite'))
+      .toBe('./data/reco-web.sqlite');
+  });
+
+  it('uses the renamed default path for a new installation', () => {
+    expect(resolveApplicationDatabasePath({}, () => false))
+      .toBe('./data/ultimate-video-stats.sqlite');
+  });
+});
 
 describe('database migrations', () => {
   it('places schema-v1 games in per-team imported tournaments', () => {

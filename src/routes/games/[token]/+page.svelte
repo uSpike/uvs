@@ -2,20 +2,20 @@
   import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, Plus, Trash2, Unlock } from '@lucide/svelte';
   import type { MetadataTimeline } from '$lib/metadata';
   import {
-    RecoVideoViewer,
+    UVSVideoViewer,
     type GameViewerSettings,
-    type RecoViewerPlaybackMarker,
-    type RecoViewerSpatialMarker,
-    type RecoViewerSpatialPoint,
-    type RecoVideoViewerSource,
+    type UVSViewerPlaybackMarker,
+    type UVSViewerSpatialMarker,
+    type UVSViewerSpatialPoint,
+    type UVSVideoViewerSource,
   } from '$lib';
   import GameStatsRecorder from '$lib/GameStatsRecorder.svelte';
   import { gameEventLabel } from '$lib/game-events';
   import { autoCameraEndzoneAtTime, gamePlaybackAnnotations, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
-  import type { RecoViewerPlaybackState } from '$lib';
+  import type { UVSViewerPlaybackState } from '$lib';
 
   let { data, form } = $props();
-  let source = $state.raw<RecoVideoViewerSource | null>(null);
+  let source = $state.raw<UVSVideoViewerSource | null>(null);
   let metadataError = $state('');
   let currentSettings = $state<GameViewerSettings | null>(null);
   let settingsJson = $derived(currentSettings ? JSON.stringify(currentSettings) : '');
@@ -26,17 +26,17 @@
     seekTo: (seconds: number) => void;
     stepFrames: (frameDelta: number) => void;
     setAutoCameraEnabled: (enabled: boolean) => void;
-    getPlaybackState: () => RecoViewerPlaybackState;
+    getPlaybackState: () => UVSViewerPlaybackState;
   } | null>(null);
   let copiedShareId = $state<number | null>(null);
   let statsEditing = $state(false);
   let statsRecorder = $state<{
     toggleEditing: () => void;
-    placeSpatialPoint: (point: RecoViewerSpatialPoint) => void;
-    adjustSpatialPoint: (index: number, point: RecoViewerSpatialPoint) => void;
+    placeSpatialPoint: (point: UVSViewerSpatialPoint) => void;
+    adjustSpatialPoint: (index: number, point: UVSViewerSpatialPoint) => void;
   } | null>(null);
   let spatialPlacementActive = $state(false);
-  let spatialMarkers = $state<RecoViewerSpatialMarker[]>([]);
+  let spatialMarkers = $state<UVSViewerSpatialMarker[]>([]);
   let highlightOverlay = $state<{
     description: string;
     position: number;
@@ -44,7 +44,7 @@
     countdownSeconds: number | null;
   } | null>(null);
   let trackingSnapshot = $state.raw<GameTrackingSnapshot>((() => data.tracking)());
-  let viewerPlayback = $state<RecoViewerPlaybackState>({
+  let viewerPlayback = $state<UVSViewerPlaybackState>({
     currentTime: 0,
     duration: 0,
     playing: false,
@@ -58,7 +58,7 @@
   );
   const actionPlaybackMarkers = $derived(buildActionPlaybackMarkers(trackingSnapshot));
 
-  const emptyPlayback: RecoViewerPlaybackState = {
+  const emptyPlayback: UVSViewerPlaybackState = {
     currentTime: 0,
     duration: 0,
     playing: false,
@@ -110,7 +110,7 @@
     settingsSaveForm?.requestSubmit();
   }
 
-  function buildActionPlaybackMarkers(snapshot: GameTrackingSnapshot): RecoViewerPlaybackMarker[] {
+  function buildActionPlaybackMarkers(snapshot: GameTrackingSnapshot): UVSViewerPlaybackMarker[] {
     const playerNames = new Map(snapshot.data.players.map((player) => [player.id, player.name]));
     return gamePlaybackAnnotations(snapshot.data).map((annotation) => ({
       id: `${annotation.eventId}-${annotation.id}`,
@@ -137,7 +137,7 @@
     }
   }
 
-  function playbackMarkerTone(type: GameEventType): RecoViewerPlaybackMarker['tone'] {
+  function playbackMarkerTone(type: GameEventType): UVSViewerPlaybackMarker['tone'] {
     switch (type) {
       case 'possession_start': return 'possession';
       case 'completion': return 'completion';
@@ -163,7 +163,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.game.title} - Reco Games</title>
+  <title>{data.game.title} - Ultimate Video Stats</title>
 </svelte:head>
 
 <section class="game-page">
@@ -171,7 +171,7 @@
     {#if data.game.hasVideo}
     <div class="game-viewer-pane">
       {#if source}
-        <RecoVideoViewer
+        <UVSVideoViewer
           bind:this={viewer}
           {source}
           settings={data.game.settings}

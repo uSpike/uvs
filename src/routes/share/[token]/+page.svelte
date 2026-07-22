@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { MetadataTimeline } from '$lib/metadata';
-  import { RecoVideoViewer, type RecoVideoViewerSource } from '$lib';
+  import { UVSVideoViewer, type UVSVideoViewerSource } from '$lib';
 
   let { data } = $props();
-  let source = $state.raw<RecoVideoViewerSource | null>(null);
+  let source = $state.raw<UVSVideoViewerSource | null>(null);
   let metadataError = $state('');
 
   $effect(() => {
@@ -33,7 +33,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.game.title} - Reco Games</title>
+  <title>{data.game.title} - Ultimate Video Stats</title>
 </svelte:head>
 
 <section class="shared-game-page">
@@ -45,7 +45,7 @@
   </header>
   <div class="shared-viewer">
     {#if source}
-      <RecoVideoViewer {source} settings={data.game.settings} title="Shared game video" />
+      <UVSVideoViewer {source} settings={data.game.settings} title="Shared game video" />
     {:else if metadataError}
       <div class="viewer-state error" role="alert">{metadataError}</div>
     {:else}
