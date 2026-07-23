@@ -1314,6 +1314,7 @@ function spatialAnnotationRole(value: unknown): SpatialAnnotationRole {
     value === 'receiver' ||
     value === 'intended_receiver' ||
     value === 'defender' ||
+    value === 'turnover_location' ||
     value === 'scorer' ||
     value === 'outgoing_player' ||
     value === 'incoming_player'

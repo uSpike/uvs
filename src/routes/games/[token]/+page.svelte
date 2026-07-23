@@ -120,7 +120,9 @@
     return gamePlaybackAnnotations(snapshot.data).map((annotation) => ({
       id: `${annotation.eventId}-${annotation.id}`,
       label: gameEventLabel(annotation.eventType),
-      detail: `${annotation.playerId === null ? 'Unknown player' : playerNames.get(annotation.playerId) ?? 'Unknown player'} · ${playbackRoleLabel(annotation.role)}`,
+      detail: annotation.role === 'turnover_location'
+        ? 'Turnover location'
+        : `${annotation.playerId === null ? 'Unknown player' : playerNames.get(annotation.playerId) ?? 'Unknown player'} · ${playbackRoleLabel(annotation.role)}`,
       tone: playbackMarkerTone(annotation.eventType),
       timeMs: annotation.timeMs,
       frameIndex: annotation.frameIndex,
@@ -136,6 +138,7 @@
       case 'receiver': return 'receiver';
       case 'intended_receiver': return 'intended receiver';
       case 'defender': return 'defender';
+      case 'turnover_location': return 'turnover location';
       case 'scorer': return 'scorer';
       case 'outgoing_player': return 'player out';
       case 'incoming_player': return 'player in';
@@ -148,7 +151,8 @@
       case 'completion': return 'completion';
       case 'turnover': return 'turnover';
       case 'goal': return 'goal';
-      case 'defended': return 'defense';
+      case 'defended':
+      case 'opponent_turnover': return 'defense';
       default: return 'neutral';
     }
   }

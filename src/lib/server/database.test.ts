@@ -54,7 +54,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(15);
+    expect(database.pragma('user_version', { simple: true })).toBe(16);
     expect(
       database.prepare(
         `SELECT season_rosters.name AS roster, tournaments.name AS tournament,
@@ -119,7 +119,7 @@ describe('database migrations', () => {
 
     expect(database.prepare('SELECT COUNT(*) AS count FROM season_rosters').get()).toEqual({ count: 0 });
     expect(database.prepare('SELECT COUNT(*) AS count FROM tournaments').get()).toEqual({ count: 0 });
-    expect(database.pragma('user_version', { simple: true })).toBe(15);
+    expect(database.pragma('user_version', { simple: true })).toBe(16);
     database.close();
   });
 
@@ -141,7 +141,7 @@ describe('database migrations', () => {
     expect(
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_players'").get(),
     ).toBeUndefined();
-    expect(database.pragma('user_version', { simple: true })).toBe(15);
+    expect(database.pragma('user_version', { simple: true })).toBe(16);
     database.close();
   });
 });

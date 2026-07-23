@@ -29,6 +29,7 @@ export type SpatialAnnotationRole =
   | 'receiver'
   | 'intended_receiver'
   | 'defender'
+  | 'turnover_location'
   | 'scorer'
   | 'outgoing_player'
   | 'incoming_player';

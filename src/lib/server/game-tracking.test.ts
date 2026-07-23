@@ -399,6 +399,42 @@ describe('GameTrackingRepository', () => {
     ).toMatchObject({ blocks: 1 });
   });
 
+  it('records a positioned opponent turnover without awarding a player or line block', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'defense',
+      startTimeMs: 1_000,
+      pullerPlayerId: players.alex,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: {},
+    }).currentPointId!;
+
+    const turnover = tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'opponent_turnover',
+      payload: { reason: 'unknown' },
+      annotations: [{
+        role: 'turnover_location',
+        playerId: null,
+        timeMs: 2_000,
+        frameIndex: 60,
+        panoramaYaw: -0.2,
+        panoramaPitch: 0.04,
+      }],
+    });
+
+    expect(turnover.currentPointState?.possession).toBe('offense');
+    expect(turnover.data.points[0].events[0]).toMatchObject({
+      type: 'opponent_turnover',
+      payload: { reason: 'unknown' },
+      annotations: [{ role: 'turnover_location', playerId: null }],
+    });
+    expect(turnover.statistics.playerStatistics.every((stats) => stats.blocks === 0)).toBe(true);
+    expect(turnover.statistics.lineStatistics[0]).toMatchObject({ blocks: 0 });
+  });
+
   it('requires thrower and receiver attribution for video events', () => {
     const { tracking, game, lineId, players } = configuredGame();
     const pointId = tracking.startPoint(game.token, {
