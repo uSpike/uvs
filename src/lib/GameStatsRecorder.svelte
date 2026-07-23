@@ -1263,8 +1263,10 @@
   }
 
   async function undoLastTimelineEntry(): Promise<void> {
+    const timeline = timelineItems();
     const entry = lastUndoableTimelineEntry();
     if (!entry) return;
+    const previousTimeMs = timeline.at(-2)?.timeMs ?? 0;
     const result = await mutate(
       entry.kind === 'event'
         ? { operation: 'deleteEvent', eventId: entry.event.id }
@@ -1273,6 +1275,7 @@
     );
     if (!result) return;
     redoEvent = entry.kind === 'event' ? entry.event : null;
+    if (snapshot.data.game.hasVideo) seekPlayback(previousTimeMs / 1000);
   }
 
   async function redoLastTimelineEvent(): Promise<void> {
