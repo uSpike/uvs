@@ -2,8 +2,38 @@
   import { ArrowLeft, BarChart3, ChevronDown, ClipboardList, ExternalLink, Play } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
+  import {
+    compareTableSortValues,
+    initialTableSortDirection,
+    type TableSortDirection,
+    type TableSortValue,
+  } from '$lib/table-sort';
 
   let { data } = $props();
+  type PlayerStatistics = typeof data.statistics.playerStatistics[number];
+  type LineStatistics = typeof data.statistics.lineStatistics[number];
+  type ConnectionStatistics = typeof data.statistics.connectionStatistics[number];
+  type PlayerSortKey =
+    | 'playerName' | 'timePlayedMs' | 'pointsPlayed'
+    | 'oPointsPlayed' | 'oWinPercentage' | 'dPointsPlayed' | 'dWinPercentage'
+    | 'completions' | 'throwingPercentage' | 'receptions' | 'receivingPercentage'
+    | 'drops' | 'touches' | 'turnovers' | 'turnoversPerTouch' | 'goals' | 'assists'
+    | 'hockeyAssists' | 'blocks' | 'pulls' | 'plusMinus' | 'timeWithDiscMs';
+  type LineSortKey =
+    | 'lineName' | 'timePlayedMs' | 'pointsPlayed'
+    | 'oPointsPlayed' | 'oWinPercentage' | 'dPointsPlayed' | 'dWinPercentage'
+    | 'cleanHolds' | 'defensiveConversionPercentage'
+    | 'completions' | 'turnovers' | 'blocks' | 'goalsFor' | 'goalsAgainst' | 'plusMinus';
+  type ConnectionSortKey =
+    | 'throwerName' | 'receiverName' | 'attempts' | 'completions'
+    | 'completionPercentage' | 'goals' | 'turnovers';
+
+  let playerSortKey = $state<PlayerSortKey | null>(null);
+  let playerSortDirection = $state<TableSortDirection>('ascending');
+  let lineSortKey = $state<LineSortKey | null>(null);
+  let lineSortDirection = $state<TableSortDirection>('ascending');
+  let connectionSortKey = $state<ConnectionSortKey | null>(null);
+  let connectionSortDirection = $state<TableSortDirection>('ascending');
 
   const duration = (milliseconds: number): string => {
     const seconds = Math.round(milliseconds / 1000);
@@ -11,9 +41,165 @@
   };
   const pct = (won: number, played: number): string =>
     played === 0 ? '—' : `${Math.round((won / played) * 100)}%`;
+
+  function togglePlayerSort(key: PlayerSortKey, kind: 'text' | 'number'): void {
+    if (playerSortKey === key) {
+      playerSortDirection = playerSortDirection === 'ascending' ? 'descending' : 'ascending';
+    } else {
+      playerSortKey = key;
+      playerSortDirection = initialTableSortDirection(kind);
+    }
+  }
+
+  function toggleLineSort(key: LineSortKey, kind: 'text' | 'number'): void {
+    if (lineSortKey === key) {
+      lineSortDirection = lineSortDirection === 'ascending' ? 'descending' : 'ascending';
+    } else {
+      lineSortKey = key;
+      lineSortDirection = initialTableSortDirection(kind);
+    }
+  }
+
+  function toggleConnectionSort(key: ConnectionSortKey, kind: 'text' | 'number'): void {
+    if (connectionSortKey === key) {
+      connectionSortDirection =
+        connectionSortDirection === 'ascending' ? 'descending' : 'ascending';
+    } else {
+      connectionSortKey = key;
+      connectionSortDirection = initialTableSortDirection(kind);
+    }
+  }
+
+  function sortedPlayerStatistics(rows: PlayerStatistics[]): PlayerStatistics[] {
+    if (playerSortKey === null) return rows;
+    const key = playerSortKey;
+    return [...rows].sort((left, right) =>
+      compareTableSortValues(
+        playerSortValue(left, key),
+        playerSortValue(right, key),
+        playerSortDirection,
+      ) || left.playerName.localeCompare(right.playerName)
+    );
+  }
+
+  function sortedLineStatistics(rows: LineStatistics[]): LineStatistics[] {
+    if (lineSortKey === null) return rows;
+    const key = lineSortKey;
+    return [...rows].sort((left, right) =>
+      compareTableSortValues(
+        lineSortValue(left, key),
+        lineSortValue(right, key),
+        lineSortDirection,
+      ) || left.lineName.localeCompare(right.lineName)
+    );
+  }
+
+  function sortedConnectionStatistics(rows: ConnectionStatistics[]): ConnectionStatistics[] {
+    if (connectionSortKey === null) return rows;
+    const key = connectionSortKey;
+    return [...rows].sort((left, right) =>
+      compareTableSortValues(
+        connectionSortValue(left, key),
+        connectionSortValue(right, key),
+        connectionSortDirection,
+      ) ||
+      left.throwerName.localeCompare(right.throwerName) ||
+      left.receiverName.localeCompare(right.receiverName)
+    );
+  }
+
+  function playerSortValue(stats: PlayerStatistics, key: PlayerSortKey): TableSortValue {
+    if (key === 'oWinPercentage') {
+      return stats.oPointsPlayed === 0 ? null : stats.oPointsWon / stats.oPointsPlayed;
+    }
+    if (key === 'dWinPercentage') {
+      return stats.dPointsPlayed === 0 ? null : stats.dPointsWon / stats.dPointsPlayed;
+    }
+    if (key === 'throwingPercentage') {
+      return stats.throwingAttempts === 0 ? null : stats.completions / stats.throwingAttempts;
+    }
+    if (key === 'receivingPercentage') {
+      return stats.receivingTargets === 0 ? null : stats.receptions / stats.receivingTargets;
+    }
+    if (key === 'turnoversPerTouch') {
+      return stats.touches === 0 ? null : stats.turnovers / stats.touches;
+    }
+    return stats[key];
+  }
+
+  function lineSortValue(stats: LineStatistics, key: LineSortKey): TableSortValue {
+    if (key === 'oWinPercentage') {
+      return stats.oPointsPlayed === 0 ? null : stats.oPointsWon / stats.oPointsPlayed;
+    }
+    if (key === 'dWinPercentage') {
+      return stats.dPointsPlayed === 0 ? null : stats.dPointsWon / stats.dPointsPlayed;
+    }
+    if (key === 'defensiveConversionPercentage') {
+      return stats.defensiveConversionOpportunities === 0
+        ? null
+        : stats.defensiveConversions / stats.defensiveConversionOpportunities;
+    }
+    return stats[key];
+  }
+
+  function connectionSortValue(
+    stats: ConnectionStatistics,
+    key: ConnectionSortKey,
+  ): TableSortValue {
+    if (key === 'completionPercentage') {
+      return stats.attempts === 0 ? null : stats.completions / stats.attempts;
+    }
+    return stats[key];
+  }
 </script>
 
+{#snippet playerHeader(key: PlayerSortKey, label: string, title: string, kind: 'text' | 'number')}
+  <th {title} aria-sort={playerSortKey === key ? playerSortDirection : 'none'}>
+    <button
+      class="sort-column"
+      class:active={playerSortKey === key}
+      type="button"
+      aria-label={`Sort players by ${label}`}
+      onclick={() => togglePlayerSort(key, kind)}
+    ><span>{label}</span><small aria-hidden="true">{playerSortKey === key ? (playerSortDirection === 'ascending' ? '▲' : '▼') : '↕'}</small></button>
+  </th>
+{/snippet}
+
+{#snippet lineHeader(key: LineSortKey, label: string, title: string, kind: 'text' | 'number')}
+  <th {title} aria-sort={lineSortKey === key ? lineSortDirection : 'none'}>
+    <button
+      class="sort-column"
+      class:active={lineSortKey === key}
+      type="button"
+      aria-label={`Sort lines by ${label}`}
+      onclick={() => toggleLineSort(key, kind)}
+    ><span>{label}</span><small aria-hidden="true">{lineSortKey === key ? (lineSortDirection === 'ascending' ? '▲' : '▼') : '↕'}</small></button>
+  </th>
+{/snippet}
+
+{#snippet connectionHeader(key: ConnectionSortKey, label: string, title: string, kind: 'text' | 'number')}
+  <th {title} aria-sort={connectionSortKey === key ? connectionSortDirection : 'none'}>
+    <button
+      class="sort-column"
+      class:active={connectionSortKey === key}
+      type="button"
+      aria-label={`Sort connections by ${label}`}
+      onclick={() => toggleConnectionSort(key, kind)}
+    ><span>{label}</span><small aria-hidden="true">{connectionSortKey === key ? (connectionSortDirection === 'ascending' ? '▲' : '▼') : '↕'}</small></button>
+  </th>
+{/snippet}
+
 {#snippet statisticsSections(statistics: typeof data.statistics)}
+  <section class="stats-section">
+    <header><h2>Team efficiency</h2><span>Point and possession outcomes</span></header>
+    <div class="team-summary">
+      <div title={statHelp.holdRate}><span>Hold rate</span><strong>{pct(statistics.teamStatistics.oPointsWon, statistics.teamStatistics.oPointsPlayed)}</strong><small>{statistics.teamStatistics.oPointsWon}/{statistics.teamStatistics.oPointsPlayed} O points</small></div>
+      <div title={statHelp.cleanHolds}><span>Clean holds</span><strong>{statistics.teamStatistics.cleanHolds}</strong><small>No turnovers</small></div>
+      <div title={statHelp.breakRate}><span>Break rate</span><strong>{pct(statistics.teamStatistics.dPointsWon, statistics.teamStatistics.dPointsPlayed)}</strong><small>{statistics.teamStatistics.dPointsWon}/{statistics.teamStatistics.dPointsPlayed} D points</small></div>
+      <div title={statHelp.defensiveConversion}><span>D conversion</span><strong>{pct(statistics.teamStatistics.defensiveConversions, statistics.teamStatistics.defensiveConversionOpportunities)}</strong><small>{statistics.teamStatistics.defensiveConversions}/{statistics.teamStatistics.defensiveConversionOpportunities} possessions</small></div>
+    </div>
+  </section>
+
   <section class="stats-section">
     <header><h2 title={statHelp.matchupPoints}>Preferred matchup points</h2><span>{statistics.matchupStatistics.unclassifiedPoints} unclassified</span></header>
     <div class="matchup-summary">
@@ -29,20 +215,80 @@
 
   <section class="stats-section">
     <header><h2>Players</h2><span>Scoring pass counts as a completion and reception</span></header>
-    <div class="table-scroll"><table><thead><tr><th>Player</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.receptions}>R</th><th title={statHelp.turnovers}>T</th><th title={statHelp.goals}>G</th><th title={statHelp.assists}>A</th><th title={statHelp.hockeyAssists}>2A</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.pulls}>Pulls</th><th title={statHelp.plusMinus}>+/-</th><th title={statHelp.discTime}>Disc</th></tr></thead><tbody>
-      {#each statistics.playerStatistics as stats}
-        <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`)}>{stats.playerName}</a></th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.receptions}</td><td>{stats.turnovers}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.pulls}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{duration(stats.timeWithDiscMs)}</td></tr>
+    <div class="table-scroll"><table><thead><tr>
+      {@render playerHeader('playerName', 'Player', 'Player name', 'text')}
+      {@render playerHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
+      {@render playerHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
+      {@render playerHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
+      {@render playerHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
+      {@render playerHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
+      {@render playerHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
+      {@render playerHeader('completions', 'C', statHelp.completions, 'number')}
+      {@render playerHeader('throwingPercentage', 'C%', statHelp.throwingPercentage, 'number')}
+      {@render playerHeader('receptions', 'R', statHelp.receptions, 'number')}
+      {@render playerHeader('receivingPercentage', 'R%', statHelp.receivingPercentage, 'number')}
+      {@render playerHeader('drops', 'Drp', statHelp.drops, 'number')}
+      {@render playerHeader('touches', 'Touch', statHelp.touches, 'number')}
+      {@render playerHeader('turnovers', 'T', statHelp.turnovers, 'number')}
+      {@render playerHeader('turnoversPerTouch', 'T/Touch', statHelp.turnoversPerTouch, 'number')}
+      {@render playerHeader('goals', 'G', statHelp.goals, 'number')}
+      {@render playerHeader('assists', 'A', statHelp.assists, 'number')}
+      {@render playerHeader('hockeyAssists', '2A', statHelp.hockeyAssists, 'number')}
+      {@render playerHeader('blocks', 'Blocks', statHelp.blocks, 'number')}
+      {@render playerHeader('pulls', 'Pulls', statHelp.pulls, 'number')}
+      {@render playerHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
+      {@render playerHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
+    </tr></thead><tbody>
+      {#each sortedPlayerStatistics(statistics.playerStatistics) as stats}
+        <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`)}>{stats.playerName}</a></th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{pct(stats.completions, stats.throwingAttempts)}</td><td>{stats.receptions}</td><td>{pct(stats.receptions, stats.receivingTargets)}</td><td>{stats.drops}</td><td>{stats.touches}</td><td>{stats.turnovers}</td><td>{pct(stats.turnovers, stats.touches)}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.pulls}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{duration(stats.timeWithDiscMs)}</td></tr>
       {/each}
     </tbody></table></div>
   </section>
 
   <section class="stats-section">
     <header><h2>Lines</h2><span>Independent point and event totals</span></header>
-    <div class="table-scroll"><table><thead><tr><th>Line</th><th title={statHelp.timePlayed}>Time</th><th title={statHelp.pointsPlayed}>Pts</th><th title={statHelp.offensePointsPlayed}>O</th><th title={statHelp.offenseWinPercentage}>O%</th><th title={statHelp.defensePointsPlayed}>D</th><th title={statHelp.defenseWinPercentage}>D%</th><th title={statHelp.completions}>C</th><th title={statHelp.turnovers}>T</th><th title={statHelp.blocks}>Blocks</th><th title={statHelp.goalsFor}>GF</th><th title={statHelp.goalsAgainst}>GA</th><th title={statHelp.plusMinus}>+/-</th></tr></thead><tbody>
-      {#each statistics.lineStatistics as stats}
-        <tr><th>{stats.lineName}</th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{stats.turnovers}</td><td>{stats.blocks}</td><td>{stats.goalsFor}</td><td>{stats.goalsAgainst}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td></tr>
+    <div class="table-scroll"><table><thead><tr>
+      {@render lineHeader('lineName', 'Line', 'Line name', 'text')}
+      {@render lineHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
+      {@render lineHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
+      {@render lineHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
+      {@render lineHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
+      {@render lineHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
+      {@render lineHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
+      {@render lineHeader('cleanHolds', 'CH', statHelp.cleanHolds, 'number')}
+      {@render lineHeader('defensiveConversionPercentage', 'DC%', statHelp.defensiveConversion, 'number')}
+      {@render lineHeader('completions', 'C', statHelp.completions, 'number')}
+      {@render lineHeader('turnovers', 'T', statHelp.turnovers, 'number')}
+      {@render lineHeader('blocks', 'Blocks', statHelp.blocks, 'number')}
+      {@render lineHeader('goalsFor', 'GF', statHelp.goalsFor, 'number')}
+      {@render lineHeader('goalsAgainst', 'GA', statHelp.goalsAgainst, 'number')}
+      {@render lineHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
+    </tr></thead><tbody>
+      {#each sortedLineStatistics(statistics.lineStatistics) as stats}
+        <tr><th>{stats.lineName}</th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.cleanHolds}</td><td>{pct(stats.defensiveConversions, stats.defensiveConversionOpportunities)}</td><td>{stats.completions}</td><td>{stats.turnovers}</td><td>{stats.blocks}</td><td>{stats.goalsFor}</td><td>{stats.goalsAgainst}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td></tr>
       {/each}
     </tbody></table></div>
+  </section>
+
+  <section class="stats-section">
+    <header><h2>Connections</h2><span>Known thrower and receiver pairings</span></header>
+    {#if statistics.connectionStatistics.length > 0}
+      <div class="table-scroll"><table><thead><tr>
+        {@render connectionHeader('throwerName', 'Thrower', 'Thrower name', 'text')}
+        {@render connectionHeader('receiverName', 'Receiver', 'Receiver name', 'text')}
+        {@render connectionHeader('attempts', 'Att', statHelp.connectionAttempts, 'number')}
+        {@render connectionHeader('completions', 'C', statHelp.completions, 'number')}
+        {@render connectionHeader('completionPercentage', 'C%', statHelp.connectionPercentage, 'number')}
+        {@render connectionHeader('goals', 'G', statHelp.goals, 'number')}
+        {@render connectionHeader('turnovers', 'T', statHelp.turnovers, 'number')}
+      </tr></thead><tbody>
+        {#each sortedConnectionStatistics(statistics.connectionStatistics) as stats}
+          <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.throwerPlayerId}`)}>{stats.throwerName}</a></th><td><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.receiverPlayerId}`)}>{stats.receiverName}</a></td><td>{stats.attempts}</td><td>{stats.completions}</td><td>{pct(stats.completions, stats.attempts)}</td><td>{stats.goals}</td><td>{stats.turnovers}</td></tr>
+        {/each}
+      </tbody></table></div>
+    {:else}
+      <p class="empty-stat">No passes with both players identified yet.</p>
+    {/if}
   </section>
 {/snippet}
 
@@ -142,13 +388,27 @@
   .matchup-summary .fmp strong { color:#896817; }
   .matchup-summary span { color:#2d332c; font-size:11px; font-weight:680; }
   .matchup-summary small { color:#747c72; font-size:9px; }
+  .team-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .team-summary > div { display:grid; gap:3px; padding:12px; border-left:1px solid #e3e6e1; }
+  .team-summary > div:first-child { border-left:0; }
+  .team-summary span { color:#737b71; font-size:9px; font-weight:700; text-transform:uppercase; }
+  .team-summary strong { color:#272d26; font-size:19px; }
+  .team-summary small { color:#747c72; font-size:9px; }
+  .empty-stat { margin:0; padding:18px 12px; color:#747c72; font-size:10px; }
   .table-scroll { max-width:100%; overflow:auto; }
   table { width:max-content; min-width:100%; border-collapse:collapse; font-size:11px; }
   th,td { height:36px; padding:5px 9px; border-bottom:1px solid #e3e6e1; text-align:right; white-space:nowrap; }
   thead th { color:#6d756b; background:#fbfcfa; font-size:9px; text-transform:uppercase; }
+  .sort-column { display:flex; align-items:center; justify-content:flex-end; gap:4px; width:100%; padding:0; border:0; color:inherit; background:transparent; font:inherit; font-weight:700; text-transform:inherit; cursor:pointer; }
+  .sort-column small { color:#a1a89e; font-size:7px; line-height:1; }
+  .sort-column.active { color:#087f9b; }
+  .sort-column.active small { color:#087f9b; }
+  thead th:first-child .sort-column { justify-content:flex-start; }
   th:first-child { position:sticky; left:0; min-width:130px; color:#2d332c; background:#fff; text-align:left; }
   tbody tr:last-child > * { border-bottom:0; }
   tbody tr:hover > * { background:#f8faf7; }
   tbody th a { color:#087f9b; text-decoration:none; }
+  tbody td a { color:#087f9b; text-decoration:none; }
+  @media(max-width:680px){.team-summary{grid-template-columns:repeat(2,1fr)}.team-summary > div:nth-child(odd){border-left:0}.team-summary > div:nth-child(n+3){border-top:1px solid #e3e6e1}}
   @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 18px}.game-list time{display:none}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}}
 </style>

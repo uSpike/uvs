@@ -9,6 +9,7 @@ import {
   gamePlaybackAnnotations,
   latestHandlerSpatialAnnotation,
   latestPointTimeMs,
+  mergeGameStatistics,
   type GameEventPayload,
   type GameEventType,
   type TrackingEvent,
@@ -358,6 +359,125 @@ describe('game statistics', () => {
       completions: 3,
       goalsFor: 1,
       plusMinus: 1,
+    });
+    expect(calculated.teamStatistics).toMatchObject({
+      oPointsPlayed: 1,
+      oPointsWon: 1,
+      cleanHolds: 1,
+    });
+  });
+
+  it('derives efficiency, touches, drops, connections, and defensive conversion', () => {
+    nextEventId = 10;
+    const recorded = point();
+    recorded.events = [
+      event(1, 1_500, 'possession_start', { playerId: 1 }),
+      event(1, 2_000, 'completion', { throwerId: 1, receiverId: 2 }),
+      event(1, 3_000, 'turnover', {
+        throwerId: 2,
+        intendedReceiverId: 3,
+        reason: 'drop',
+      }),
+      event(1, 4_000, 'defended', { defenderId: 3 }),
+      event(1, 5_000, 'completion', { throwerId: 3, receiverId: 1 }),
+      event(1, 6_000, 'goal', { throwerId: 1, receiverId: 2, callahan: false }),
+    ];
+    const data = gameData([recorded]);
+    const calculated = calculateGameStatistics(data);
+    const byId = new Map(calculated.playerStatistics.map((stats) => [stats.playerId, stats]));
+
+    expect(byId.get(1)).toMatchObject({
+      completions: 2,
+      throwingAttempts: 2,
+      receptions: 1,
+      receivingTargets: 1,
+      touches: 2,
+      turnovers: 0,
+    });
+    expect(byId.get(2)).toMatchObject({
+      completions: 0,
+      throwingAttempts: 1,
+      receptions: 2,
+      receivingTargets: 2,
+      touches: 2,
+      drops: 0,
+      turnovers: 0,
+    });
+    expect(byId.get(3)).toMatchObject({
+      completions: 1,
+      throwingAttempts: 1,
+      receptions: 0,
+      receivingTargets: 1,
+      drops: 1,
+      touches: 0,
+      turnovers: 1,
+      blocks: 1,
+    });
+    expect(calculated.teamStatistics).toEqual({
+      pointsPlayed: 1,
+      oPointsPlayed: 1,
+      dPointsPlayed: 0,
+      oPointsWon: 1,
+      dPointsWon: 0,
+      cleanHolds: 0,
+      defensiveConversionOpportunities: 1,
+      defensiveConversions: 1,
+    });
+    expect(calculated.lineStatistics[0]).toMatchObject({
+      cleanHolds: 0,
+      defensiveConversionOpportunities: 1,
+      defensiveConversions: 1,
+    });
+    expect(calculated.connectionStatistics).toEqual([
+      {
+        throwerPlayerId: 1,
+        throwerName: 'Alex',
+        receiverPlayerId: 2,
+        receiverName: 'Blair',
+        attempts: 2,
+        completions: 2,
+        goals: 1,
+        turnovers: 0,
+      },
+      {
+        throwerPlayerId: 3,
+        throwerName: 'Casey',
+        receiverPlayerId: 1,
+        receiverName: 'Alex',
+        attempts: 1,
+        completions: 1,
+        goals: 0,
+        turnovers: 0,
+      },
+      {
+        throwerPlayerId: 2,
+        throwerName: 'Blair',
+        receiverPlayerId: 3,
+        receiverName: 'Casey',
+        attempts: 1,
+        completions: 0,
+        goals: 0,
+        turnovers: 1,
+      },
+    ]);
+
+    const merged = mergeGameStatistics(
+      [calculated, calculated],
+      data.players,
+      data.lines,
+    );
+    expect(merged.teamStatistics.defensiveConversions).toBe(2);
+    expect(merged.playerStatistics.find((stats) => stats.playerId === 1)).toMatchObject({
+      completions: 4,
+      throwingAttempts: 4,
+      touches: 4,
+    });
+    expect(merged.connectionStatistics[0]).toMatchObject({
+      throwerPlayerId: 1,
+      receiverPlayerId: 2,
+      attempts: 4,
+      completions: 4,
+      goals: 2,
     });
   });
 

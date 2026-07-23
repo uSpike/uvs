@@ -329,7 +329,11 @@ export interface PlayerStatistics {
   oPointsWon: number;
   dPointsWon: number;
   completions: number;
+  throwingAttempts: number;
   receptions: number;
+  receivingTargets: number;
+  drops: number;
+  touches: number;
   turnovers: number;
   goals: number;
   assists: number;
@@ -350,12 +354,39 @@ export interface LineStatistics {
   dPointsPlayed: number;
   oPointsWon: number;
   dPointsWon: number;
+  cleanHolds: number;
+  defensiveConversionOpportunities: number;
+  defensiveConversions: number;
   completions: number;
   turnovers: number;
   blocks: number;
   goalsFor: number;
   goalsAgainst: number;
   plusMinus: number;
+}
+
+/** Point and possession outcomes attributed to the tracked team as a whole. */
+export interface TeamStatistics {
+  pointsPlayed: number;
+  oPointsPlayed: number;
+  dPointsPlayed: number;
+  oPointsWon: number;
+  dPointsWon: number;
+  cleanHolds: number;
+  defensiveConversionOpportunities: number;
+  defensiveConversions: number;
+}
+
+/** Outcomes for one known thrower and intended receiver pairing. */
+export interface PlayerConnectionStatistics {
+  throwerPlayerId: number;
+  throwerName: string;
+  receiverPlayerId: number;
+  receiverName: string;
+  attempts: number;
+  completions: number;
+  goals: number;
+  turnovers: number;
 }
 
 /** Point outcomes grouped by the 4/3 preferred matchup majority. */
@@ -388,8 +419,10 @@ export interface StatisticsCoverage {
 export interface CalculatedGameStatistics {
   ourScore: number;
   opponentScore: number;
+  teamStatistics: TeamStatistics;
   playerStatistics: PlayerStatistics[];
   lineStatistics: LineStatistics[];
+  connectionStatistics: PlayerConnectionStatistics[];
   matchupStatistics: MatchupStatistics;
   coverage: StatisticsCoverage;
   warnings: string[];
@@ -701,6 +734,8 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
     data.players.map((player) => [player.id, emptyPlayerStatistics(player)]),
   );
   const lines = new Map(data.lines.map((line) => [line.id, emptyLineStatistics(line)]));
+  const teamStatistics = emptyTeamStatistics();
+  const connectionStatistics = new Map<string, PlayerConnectionStatistics>();
   const playerRoles = new Map(data.players.map((player) => [player.id, player.matchupRole]));
   const matchupStatistics = emptyMatchupStatistics();
   const warnings: string[] = [];
@@ -732,7 +767,14 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
   }
 
   for (const calculation of pointCalculations) {
-    calculatePointStatistics(calculation, players, lines, warnings);
+    calculatePointStatistics(
+      calculation,
+      players,
+      lines,
+      teamStatistics,
+      connectionStatistics,
+      warnings,
+    );
     calculateMatchupStatistics(calculation, matchupStatistics);
   }
 
@@ -743,16 +785,31 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
       line.dPointsPlayed = 0;
       line.oPointsWon = 0;
       line.dPointsWon = 0;
+      line.cleanHolds = 0;
+      line.defensiveConversionOpportunities = 0;
+      line.defensiveConversions = 0;
       line.turnovers = 0;
       line.goalsFor = 0;
       line.goalsAgainst = 0;
       line.plusMinus = 0;
     }
+    resetTeamStatistics(teamStatistics);
     resetMatchupStatistics(matchupStatistics);
     let previousOurScore = data.game.initialOurScore;
     let previousOpponentScore = data.game.initialOpponentScore;
     for (const point of [...data.manualPoints].sort((left, right) => left.sequenceNumber - right.sequenceNumber)) {
       const scored = point.ourScore > previousOurScore;
+      teamStatistics.pointsPlayed += 1;
+      if (point.startingPossession === 'offense') {
+        teamStatistics.oPointsPlayed += 1;
+        if (scored) {
+          teamStatistics.oPointsWon += 1;
+          if (point.ourTurnovers === 0) teamStatistics.cleanHolds += 1;
+        }
+      } else {
+        teamStatistics.dPointsPlayed += 1;
+        if (scored) teamStatistics.dPointsWon += 1;
+      }
       const line = lines.get(point.lineId);
       if (!line) {
         warnings.push(`Paper point ${point.sequenceNumber} references an unavailable line.`);
@@ -764,8 +821,12 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
         if (scored) {
           line.goalsFor += 1;
           line.plusMinus += 1;
-          if (point.startingPossession === 'offense') line.oPointsWon += 1;
-          else line.dPointsWon += 1;
+          if (point.startingPossession === 'offense') {
+            line.oPointsWon += 1;
+            if (point.ourTurnovers === 0) line.cleanHolds += 1;
+          } else {
+            line.dPointsWon += 1;
+          }
         } else {
           line.goalsAgainst += 1;
           line.plusMinus -= 1;
@@ -810,10 +871,17 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
   return {
     ourScore,
     opponentScore,
+    teamStatistics,
     playerStatistics: [...players.values()].sort((left, right) =>
       left.playerName.localeCompare(right.playerName),
     ),
     lineStatistics: [...lines.values()],
+    connectionStatistics: [...connectionStatistics.values()].sort(
+      (left, right) =>
+        right.completions - left.completions ||
+        left.throwerName.localeCompare(right.throwerName) ||
+        left.receiverName.localeCompare(right.receiverName),
+    ),
     matchupStatistics,
     coverage: {
       gameCount: 1,
@@ -830,9 +898,19 @@ export function mergeGameStatistics(
   calculatedGames: CalculatedGameStatistics[],
   players: Array<Pick<TrackingPlayer, 'id' | 'name'>>,
   lines: TrackingLine[],
-): Pick<CalculatedGameStatistics, 'playerStatistics' | 'lineStatistics' | 'matchupStatistics' | 'coverage'> {
+): Pick<
+  CalculatedGameStatistics,
+  | 'teamStatistics'
+  | 'playerStatistics'
+  | 'lineStatistics'
+  | 'connectionStatistics'
+  | 'matchupStatistics'
+  | 'coverage'
+> {
   const playerTotals = new Map(players.map((player) => [player.id, emptyPlayerStatistics(player)]));
   const lineTotals = new Map(lines.map((line) => [line.id, emptyLineStatistics(line)]));
+  const teamStatistics = emptyTeamStatistics();
+  const connectionTotals = new Map<string, PlayerConnectionStatistics>();
   const matchupStatistics = emptyMatchupStatistics();
   const coverage: StatisticsCoverage = {
     gameCount: 0,
@@ -842,6 +920,7 @@ export function mergeGameStatistics(
   };
 
   for (const game of calculatedGames) {
+    addNumericStatistics(teamStatistics, game.teamStatistics, []);
     for (const stats of game.playerStatistics) {
       const total = playerTotals.get(stats.playerId);
       if (total) addNumericStatistics(total, stats, ['playerId', 'playerName']);
@@ -850,6 +929,29 @@ export function mergeGameStatistics(
       const total = lineTotals.get(stats.lineId);
       if (total) addNumericStatistics(total, stats, ['lineId', 'lineName']);
     }
+    for (const stats of game.connectionStatistics) {
+      const key = connectionKey(stats.throwerPlayerId, stats.receiverPlayerId);
+      let total = connectionTotals.get(key);
+      if (!total) {
+        total = {
+          throwerPlayerId: stats.throwerPlayerId,
+          throwerName: stats.throwerName,
+          receiverPlayerId: stats.receiverPlayerId,
+          receiverName: stats.receiverName,
+          attempts: 0,
+          completions: 0,
+          goals: 0,
+          turnovers: 0,
+        };
+        connectionTotals.set(key, total);
+      }
+      addNumericStatistics(total, stats, [
+        'throwerPlayerId',
+        'throwerName',
+        'receiverPlayerId',
+        'receiverName',
+      ]);
+    }
     addNumericStatistics(matchupStatistics.mmp, game.matchupStatistics.mmp, ['matchup']);
     addNumericStatistics(matchupStatistics.fmp, game.matchupStatistics.fmp, ['matchup']);
     matchupStatistics.unclassifiedPoints += game.matchupStatistics.unclassifiedPoints;
@@ -857,10 +959,17 @@ export function mergeGameStatistics(
   }
 
   return {
+    teamStatistics,
     playerStatistics: [...playerTotals.values()].sort((left, right) =>
       left.playerName.localeCompare(right.playerName),
     ),
     lineStatistics: [...lineTotals.values()],
+    connectionStatistics: [...connectionTotals.values()].sort(
+      (left, right) =>
+        right.completions - left.completions ||
+        left.throwerName.localeCompare(right.throwerName) ||
+        left.receiverName.localeCompare(right.receiverName),
+    ),
     matchupStatistics,
     coverage,
   };
@@ -1044,15 +1153,35 @@ function calculatePointStatistics(
   calculation: PointCalculation,
   players: Map<number, PlayerStatistics>,
   lines: Map<number, LineStatistics>,
+  team: TeamStatistics,
+  connections: Map<string, PlayerConnectionStatistics>,
   warnings: string[],
 ): void {
   const { point, terminalEvent, participation, activeAtTerminal } = calculation;
   const line = lines.get(point.lineId);
   if (!line) warnings.push(`Point ${point.sequenceNumber} references an unavailable line.`);
   const participants = new Set<number>();
+  const orderedEvents = sortedEvents(point.events);
+  const terminalIndex = terminalEvent
+    ? orderedEvents.findIndex((event) => event.id === terminalEvent.id)
+    : -1;
+  const events = terminalIndex >= 0 ? orderedEvents.slice(0, terminalIndex + 1) : orderedEvents;
 
   if (terminalEvent) {
     const pointDuration = Math.max(0, terminalEvent.timeMs - point.startTimeMs);
+    const cleanHold =
+      point.startingPossession === 'offense' &&
+      terminalEvent.type === 'goal' &&
+      !events.some((event) => event.type === 'turnover');
+    team.pointsPlayed += 1;
+    if (point.startingPossession === 'offense') {
+      team.oPointsPlayed += 1;
+      if (terminalEvent.type === 'goal') team.oPointsWon += 1;
+    } else {
+      team.dPointsPlayed += 1;
+      if (terminalEvent.type === 'goal') team.dPointsWon += 1;
+    }
+    if (cleanHold) team.cleanHolds += 1;
     if (line) {
       line.timePlayedMs += pointDuration;
       line.pointsPlayed += 1;
@@ -1063,6 +1192,7 @@ function calculatePointStatistics(
         line.plusMinus += 1;
         if (point.startingPossession === 'offense') line.oPointsWon += 1;
         else line.dPointsWon += 1;
+        if (cleanHold) line.cleanHolds += 1;
       } else {
         line.goalsAgainst += 1;
         line.plusMinus -= 1;
@@ -1101,11 +1231,6 @@ function calculatePointStatistics(
     if (puller) puller.pulls += 1;
   }
 
-  const orderedEvents = sortedEvents(point.events);
-  const terminalIndex = terminalEvent
-    ? orderedEvents.findIndex((event) => event.id === terminalEvent.id)
-    : -1;
-  const events = terminalIndex >= 0 ? orderedEvents.slice(0, terminalIndex + 1) : orderedEvents;
   const stoppages = events
     .filter((event) => event.type === 'stoppage')
     .map((event) => {
@@ -1115,6 +1240,7 @@ function calculatePointStatistics(
   let handlerId: number | null = null;
   let handlerStartMs = 0;
   let previousCompletion: { payload: CompletionPayload; timeMs: number } | null = null;
+  let pendingDefensiveConversion = false;
 
   const closeHandler = (endTimeMs: number): void => {
     if (handlerId === null) return;
@@ -1130,6 +1256,7 @@ function calculatePointStatistics(
       case 'possession_start': {
         const playerId = (event.payload as PossessionStartPayload).playerId;
         closeHandler(event.timeMs);
+        if (playerId !== null) increment(players, playerId, 'touches');
         handlerId = playerId;
         handlerStartMs = event.timeMs;
         break;
@@ -1137,8 +1264,22 @@ function calculatePointStatistics(
       case 'completion': {
         const payload = event.payload as CompletionPayload;
         closeHandler(event.timeMs);
-        if (payload.throwerId !== null) increment(players, payload.throwerId, 'completions');
-        if (payload.receiverId !== null) increment(players, payload.receiverId, 'receptions');
+        if (payload.throwerId !== null) {
+          increment(players, payload.throwerId, 'completions');
+          increment(players, payload.throwerId, 'throwingAttempts');
+        }
+        if (payload.receiverId !== null) {
+          increment(players, payload.receiverId, 'receptions');
+          increment(players, payload.receiverId, 'receivingTargets');
+          increment(players, payload.receiverId, 'touches');
+        }
+        addConnectionOutcome(
+          connections,
+          players,
+          payload.throwerId,
+          payload.receiverId,
+          'completion',
+        );
         if (line) line.completions += 1;
         handlerId = payload.receiverId;
         handlerStartMs = event.timeMs;
@@ -1148,11 +1289,28 @@ function calculatePointStatistics(
       case 'turnover': {
         const payload = event.payload as TurnoverPayload;
         closeHandler(event.timeMs);
+        if (payload.throwerId !== null) {
+          increment(players, payload.throwerId, 'throwingAttempts');
+        }
+        if (payload.intendedReceiverId !== null) {
+          increment(players, payload.intendedReceiverId, 'receivingTargets');
+          if (payload.reason === 'drop') {
+            increment(players, payload.intendedReceiverId, 'drops');
+          }
+        }
         const chargedPlayerId = payload.reason === 'drop'
           ? payload.intendedReceiverId
           : payload.throwerId;
         if (chargedPlayerId !== null) increment(players, chargedPlayerId, 'turnovers');
+        addConnectionOutcome(
+          connections,
+          players,
+          payload.throwerId,
+          payload.intendedReceiverId,
+          'turnover',
+        );
         if (line) line.turnovers += 1;
+        pendingDefensiveConversion = false;
         previousCompletion = null;
         break;
       }
@@ -1161,11 +1319,17 @@ function calculatePointStatistics(
         const defenderId = (event.payload as DefendedPayload).defenderId;
         if (defenderId !== null) increment(players, defenderId, 'blocks');
         if (line) line.blocks += 1;
+        team.defensiveConversionOpportunities += 1;
+        if (line) line.defensiveConversionOpportunities += 1;
+        pendingDefensiveConversion = true;
         previousCompletion = null;
         break;
       }
       case 'opponent_turnover':
         closeHandler(event.timeMs);
+        team.defensiveConversionOpportunities += 1;
+        if (line) line.defensiveConversionOpportunities += 1;
+        pendingDefensiveConversion = true;
         previousCompletion = null;
         break;
       case 'goal': {
@@ -1179,9 +1343,25 @@ function calculatePointStatistics(
           if (payload.throwerId !== null) {
             increment(players, payload.throwerId, 'assists');
             increment(players, payload.throwerId, 'completions');
+            increment(players, payload.throwerId, 'throwingAttempts');
           }
-          if (payload.receiverId !== null) increment(players, payload.receiverId, 'receptions');
+          if (payload.receiverId !== null) {
+            increment(players, payload.receiverId, 'receptions');
+            increment(players, payload.receiverId, 'receivingTargets');
+            increment(players, payload.receiverId, 'touches');
+          }
+          addConnectionOutcome(
+            connections,
+            players,
+            payload.throwerId,
+            payload.receiverId,
+            'goal',
+          );
           if (line) line.completions += 1;
+          if (pendingDefensiveConversion) {
+            team.defensiveConversions += 1;
+            if (line) line.defensiveConversions += 1;
+          }
           if (
             previousCompletion?.payload.throwerId !== null &&
             previousCompletion?.payload.receiverId === payload.throwerId
@@ -1192,14 +1372,24 @@ function calculatePointStatistics(
               'hockeyAssists',
             );
           }
-        } else if (line) {
-          line.blocks += 1;
+        } else {
+          if (!pendingDefensiveConversion) {
+            team.defensiveConversionOpportunities += 1;
+            if (line) line.defensiveConversionOpportunities += 1;
+          }
+          team.defensiveConversions += 1;
+          if (line) {
+            line.blocks += 1;
+            line.defensiveConversions += 1;
+          }
         }
+        pendingDefensiveConversion = false;
         previousCompletion = null;
         break;
       }
       case 'conceded':
         closeHandler(event.timeMs);
+        pendingDefensiveConversion = false;
         previousCompletion = null;
         break;
       case 'substitution': {
@@ -1291,7 +1481,11 @@ function emptyPlayerStatistics(player: Pick<TrackingPlayer, 'id' | 'name'>): Pla
     oPointsWon: 0,
     dPointsWon: 0,
     completions: 0,
+    throwingAttempts: 0,
     receptions: 0,
+    receivingTargets: 0,
+    drops: 0,
+    touches: 0,
     turnovers: 0,
     goals: 0,
     assists: 0,
@@ -1313,6 +1507,9 @@ function emptyLineStatistics(line: TrackingLine): LineStatistics {
     dPointsPlayed: 0,
     oPointsWon: 0,
     dPointsWon: 0,
+    cleanHolds: 0,
+    defensiveConversionOpportunities: 0,
+    defensiveConversions: 0,
     completions: 0,
     turnovers: 0,
     blocks: 0,
@@ -1320,6 +1517,25 @@ function emptyLineStatistics(line: TrackingLine): LineStatistics {
     goalsAgainst: 0,
     plusMinus: 0,
   };
+}
+
+function emptyTeamStatistics(): TeamStatistics {
+  return {
+    pointsPlayed: 0,
+    oPointsPlayed: 0,
+    dPointsPlayed: 0,
+    oPointsWon: 0,
+    dPointsWon: 0,
+    cleanHolds: 0,
+    defensiveConversionOpportunities: 0,
+    defensiveConversions: 0,
+  };
+}
+
+function resetTeamStatistics(statistics: TeamStatistics): void {
+  for (const key of Object.keys(statistics) as Array<keyof TeamStatistics>) {
+    statistics[key] = 0;
+  }
 }
 
 function emptyMatchupStatistics(): MatchupStatistics {
@@ -1356,6 +1572,42 @@ function increment(
   if (stats && typeof stats[field] === 'number') {
     (stats[field] as number) += 1;
   }
+}
+
+function connectionKey(throwerPlayerId: number, receiverPlayerId: number): string {
+  return `${throwerPlayerId}:${receiverPlayerId}`;
+}
+
+function addConnectionOutcome(
+  connections: Map<string, PlayerConnectionStatistics>,
+  players: Map<number, PlayerStatistics>,
+  throwerPlayerId: number | null,
+  receiverPlayerId: number | null,
+  outcome: 'completion' | 'goal' | 'turnover',
+): void {
+  if (throwerPlayerId === null || receiverPlayerId === null) return;
+  const thrower = players.get(throwerPlayerId);
+  const receiver = players.get(receiverPlayerId);
+  if (!thrower || !receiver) return;
+  const key = connectionKey(throwerPlayerId, receiverPlayerId);
+  let statistics = connections.get(key);
+  if (!statistics) {
+    statistics = {
+      throwerPlayerId,
+      throwerName: thrower.playerName,
+      receiverPlayerId,
+      receiverName: receiver.playerName,
+      attempts: 0,
+      completions: 0,
+      goals: 0,
+      turnovers: 0,
+    };
+    connections.set(key, statistics);
+  }
+  statistics.attempts += 1;
+  if (outcome === 'completion' || outcome === 'goal') statistics.completions += 1;
+  if (outcome === 'goal') statistics.goals += 1;
+  if (outcome === 'turnover') statistics.turnovers += 1;
 }
 
 function sortedEvents(events: TrackingEvent[]): TrackingEvent[] {
