@@ -270,8 +270,9 @@
       onEditingChange(true);
       activeTab = snapshot.data.game.hasVideo ? 'record' : 'paper';
       connectPresence(result.token);
+      seekToLastRecordedPointTime();
       await refreshSnapshotForEditing();
-      if (editing && lockToken === result.token) seekToOpenPointResumeTime();
+      if (editing && lockToken === result.token) seekToLastRecordedPointTime();
     } catch (caught) {
       lockError = caught instanceof Error ? caught.message : 'The editing lock could not be acquired.';
     }
@@ -289,9 +290,12 @@
     }
   }
 
-  function seekToOpenPointResumeTime(): void {
-    if (!snapshot.data.game.hasVideo || !currentPoint || snapshot.currentPointState?.ended !== false) return;
-    seekPlayback(latestPointTimeMs(currentPoint) / 1000);
+  function seekToLastRecordedPointTime(): void {
+    if (!snapshot.data.game.hasVideo) return;
+    const lastPoint = [...snapshot.data.points]
+      .sort((left, right) => left.sequenceNumber - right.sequenceNumber || left.id - right.id)
+      .at(-1);
+    if (lastPoint) seekPlayback(latestPointTimeMs(lastPoint) / 1000);
   }
 
   function connectPresence(tokenValue: string): void {
