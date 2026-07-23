@@ -9,11 +9,12 @@
     type UVSViewerPlaybackMarker,
     type UVSViewerSpatialMarker,
     type UVSViewerSpatialPoint,
+    type UVSViewerTimelineSection,
     type UVSVideoViewerSource,
   } from '$lib';
   import GameStatsRecorder from '$lib/GameStatsRecorder.svelte';
   import { gameEventLabel } from '$lib/game-events';
-  import { autoCameraEndzoneAtTime, calculateScoreAtTime, gamePlaybackAnnotations, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
+  import { autoCameraEndzoneAtTime, calculatePointState, calculateScoreAtTime, gamePlaybackAnnotations, latestPointTimeMs, type GameEventType, type GameTrackingSnapshot, type SpatialAnnotationRole } from '$lib/game-stats';
   import type { UVSViewerPlaybackState } from '$lib';
 
   let { data, form } = $props();
@@ -67,6 +68,9 @@
     statsEditing
       ? shortcutsForRecordingMode(currentSettings?.recordingMode ?? data.game.settings.recordingMode)
       : [],
+  );
+  const gameTimelineSections = $derived(
+    buildGameTimelineSections(trackingSnapshot, viewerPlayback.currentTime),
   );
 
   const emptyPlayback: UVSViewerPlaybackState = {
@@ -148,6 +152,29 @@
         ];
   }
 
+  function buildGameTimelineSections(
+    snapshot: GameTrackingSnapshot,
+    playbackTimeSeconds: number,
+  ): UVSViewerTimelineSection[] {
+    const playbackTimeMs = Math.round(playbackTimeSeconds * 1000);
+    return [...snapshot.data.points]
+      .sort((left, right) => left.sequenceNumber - right.sequenceNumber || left.id - right.id)
+      .map((point) => {
+        const state = calculatePointState(point);
+        const openPointEndMs = Math.max(
+          point.startTimeMs,
+          latestPointTimeMs(point),
+          snapshot.currentPointId === point.id ? playbackTimeMs : point.startTimeMs,
+        );
+        return {
+          id: point.id.toString(),
+          label: `Point ${point.sequenceNumber}`,
+          startTimeMs: point.startTimeMs,
+          endTimeMs: Math.max(point.startTimeMs + 1, state.endTimeMs ?? openPointEndMs),
+        };
+      });
+  }
+
   function buildActionPlaybackMarkers(snapshot: GameTrackingSnapshot): UVSViewerPlaybackMarker[] {
     const playerNames = new Map(snapshot.data.players.map((player) => [player.id, player.name]));
     return gamePlaybackAnnotations(snapshot.data).map((annotation) => ({
@@ -184,6 +211,7 @@
       case 'completion': return 'completion';
       case 'turnover': return 'turnover';
       case 'goal': return 'goal';
+      case 'conceded': return 'turnover';
       case 'defended':
       case 'opponent_turnover': return 'defense';
       default: return 'neutral';
@@ -333,6 +361,7 @@
           {spatialPlacementActive}
           {spatialMarkers}
           playbackMarkers={actionPlaybackMarkers}
+          timelineSections={gameTimelineSections}
           additionalKeyboardShortcuts={recordingKeyboardShortcuts}
           onSpatialPointPlace={(point) => statsRecorder?.placeSpatialPoint(point)}
           onSpatialPointAdjust={(index, point) => statsRecorder?.adjustSpatialPoint(index, point)}

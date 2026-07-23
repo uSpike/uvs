@@ -41,9 +41,12 @@ describe('UVSVideoViewer', () => {
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
     expect(result.body).toContain('Playback speed');
+    expect(result.body).toContain('timeline-point-track');
     expect(result.body).toContain('Keyboard shortcuts');
     expect(result.body).toContain('Back 3 seconds');
+    expect(result.body).toContain('Back 1 second');
     expect(result.body).toContain('Forward 3 seconds');
+    expect(result.body).toContain('Forward 1 second');
     expect(result.body).toContain('1.25×');
     expect(result.body).toContain('1.5×');
     expect(result.body).toContain('Turn on automatic camera');

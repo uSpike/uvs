@@ -5,6 +5,7 @@ export type {
   UVSViewerPlaybackState,
   UVSViewerPlaybackMarker,
   UVSViewerKeyboardShortcut,
+  UVSViewerTimelineSection,
   UVSViewerSpatialMarker,
   UVSViewerSpatialPoint,
   UVSViewerStatus,

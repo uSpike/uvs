@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type Database from 'better-sqlite3';
+import { calculatePointState } from '$lib/game-stats';
 import { parseMetadataJsonl } from '$lib/metadata';
 import { CatalogRepository } from './catalog';
 import { openDatabase } from './database';
@@ -433,6 +434,45 @@ describe('GameTrackingRepository', () => {
     });
     expect(turnover.statistics.playerStatistics.every((stats) => stats.blocks === 0)).toBe(true);
     expect(turnover.statistics.lineStatistics[0]).toMatchObject({ blocks: 0 });
+  });
+
+  it('records a positioned concession without attributing an opponent scorer', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'defense',
+      startTimeMs: 1_000,
+      pullerPlayerId: players.alex,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: {},
+    }).currentPointId!;
+
+    const conceded = tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'conceded',
+      payload: { callahan: false },
+      annotations: [{
+        role: 'scorer',
+        playerId: null,
+        timeMs: 2_000,
+        frameIndex: 60,
+        panoramaYaw: 0.3,
+        panoramaPitch: 0.04,
+      }],
+    });
+
+    expect(conceded.currentPointId).toBeNull();
+    expect(calculatePointState(conceded.data.points[0])).toMatchObject({
+      ended: true,
+      outcome: 'conceded',
+    });
+    expect(conceded.statistics.opponentScore).toBe(1);
+    expect(conceded.data.points[0].events[0]).toMatchObject({
+      type: 'conceded',
+      payload: { callahan: false },
+      annotations: [{ role: 'scorer', playerId: null }],
+    });
   });
 
   it('requires thrower and receiver attribution for video events', () => {

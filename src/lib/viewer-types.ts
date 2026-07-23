@@ -7,6 +7,14 @@ export interface UVSViewerKeyboardShortcut {
   description: string;
 }
 
+/** A labeled media-time range shaded beneath the main video scrubber. */
+export interface UVSViewerTimelineSection {
+  id: string;
+  label: string;
+  startTimeMs: number;
+  endTimeMs: number;
+}
+
 /** A manual selection on a specific video frame, expressed in stable panorama coordinates. */
 export interface UVSViewerSpatialPoint {
   timeMs: number;

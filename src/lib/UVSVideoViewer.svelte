@@ -71,6 +71,7 @@
     UVSViewerSpatialMarker,
     UVSViewerSpatialPoint,
     UVSViewerStatus,
+    UVSViewerTimelineSection,
     UVSViewerViewState,
   } from './viewer-types';
   import type { TeamEndzone } from './game-stats';
@@ -86,8 +87,10 @@
   const PLAYBACK_RATES = [1, 1.25, 1.5] as const;
   const VIEWER_KEYBOARD_SHORTCUTS: readonly UVSViewerKeyboardShortcut[] = [
     { key: 'Space', description: 'Play / pause' },
-    { key: 'A', description: 'Back 3 seconds' },
+    { key: 'Q', description: 'Back 3 seconds' },
+    { key: 'A', description: 'Back 1 second' },
     { key: 'E', description: 'Forward 3 seconds' },
+    { key: 'D', description: 'Forward 1 second' },
     { key: '+', description: 'Zoom in' },
     { key: '−', description: 'Zoom out' },
     { key: '0', description: 'Reset view' },
@@ -139,6 +142,8 @@
   export let onSaveSettings: (() => void) | undefined = undefined;
   /** Context-specific commands supplied by the embedding statistics recorder. */
   export let additionalKeyboardShortcuts: readonly UVSViewerKeyboardShortcut[] = [];
+  /** Labeled media ranges shaded beneath the main playback scrubber. */
+  export let timelineSections: readonly UVSViewerTimelineSection[] = [];
   /** Restrict automatic framing to one video-side endzone; null uses the full field. */
   export let autoCameraEndzone: TeamEndzone | null = null;
   /** Media times where every visible detection becomes a trusted automatic-camera baseline. */
@@ -236,6 +241,12 @@
   let appliedSettings: GameViewerSettings | null = null;
   let externalSourceActive = false;
   let pendingInitialTime: number | null = null;
+  let timelinePointerActive = false;
+  let timelineInteractionVisible = false;
+  let timelineInteractionTime = 0;
+  let timelineInteractionHideTimer: ReturnType<typeof setTimeout> | null = null;
+  let timelineInteractionSection: UVSViewerTimelineSection | null = null;
+  let timelineInteractionLeftPercent = 0;
 
   let activePointer: number | null = null;
   let pointerStartX = 0;
@@ -262,6 +273,10 @@
   $: currentFrame = timeline
     ? frameIndexAtTime(currentTime, duration, timeline.lastFrameIndex)
     : 0;
+  $: timelineInteractionSection = timelineSectionAtSeconds(timelineInteractionTime);
+  $: timelineInteractionLeftPercent = duration > 0
+    ? Math.min(96, Math.max(4, (timelineInteractionTime / duration) * 100))
+    : 4;
   $: syncDetectionAreaHistory(
     timeline,
     duration,
@@ -466,6 +481,9 @@
   });
 
   onDestroy(() => {
+    if (timelineInteractionHideTimer !== null) {
+      clearTimeout(timelineInteractionHideTimer);
+    }
     if (detectionAreaHistoryBuildTimer !== null) {
       clearTimeout(detectionAreaHistoryBuildTimer);
     }
@@ -858,7 +876,64 @@
   }
 
   function seek(event: Event): void {
-    seekTo(Number((event.currentTarget as HTMLInputElement).value));
+    const timeSeconds = Number((event.currentTarget as HTMLInputElement).value);
+    showTimelineInteraction(timeSeconds);
+    seekTo(timeSeconds);
+  }
+
+  function beginTimelineInteraction(event: PointerEvent): void {
+    timelinePointerActive = true;
+    showTimelineInteraction(Number((event.currentTarget as HTMLInputElement).value));
+  }
+
+  function endTimelineInteraction(): void {
+    timelinePointerActive = false;
+    scheduleTimelineInteractionHide();
+  }
+
+  function showTimelineInteraction(timeSeconds: number): void {
+    timelineInteractionTime = timeSeconds;
+    timelineInteractionVisible = true;
+    if (timelineInteractionHideTimer !== null) {
+      clearTimeout(timelineInteractionHideTimer);
+      timelineInteractionHideTimer = null;
+    }
+    if (!timelinePointerActive) scheduleTimelineInteractionHide();
+  }
+
+  function scheduleTimelineInteractionHide(): void {
+    if (timelineInteractionHideTimer !== null) clearTimeout(timelineInteractionHideTimer);
+    timelineInteractionHideTimer = setTimeout(() => {
+      timelineInteractionVisible = false;
+      timelineInteractionHideTimer = null;
+    }, 900);
+  }
+
+  function timelineSectionAtSeconds(timeSeconds: number): UVSViewerTimelineSection | null {
+    const timeMs = Math.round(timeSeconds * 1000);
+    return timelineSections.find((section) =>
+      Number.isFinite(section.startTimeMs) &&
+      Number.isFinite(section.endTimeMs) &&
+      timeMs >= section.startTimeMs &&
+      timeMs <= section.endTimeMs) ?? null;
+  }
+
+  function timelineSectionGeometry(
+    section: UVSViewerTimelineSection,
+  ): { leftPercent: number; widthPercent: number } | null {
+    if (
+      duration <= 0 ||
+      !Number.isFinite(section.startTimeMs) ||
+      !Number.isFinite(section.endTimeMs) ||
+      section.endTimeMs < section.startTimeMs
+    ) return null;
+    const durationMs = duration * 1000;
+    const startMs = Math.min(durationMs, Math.max(0, section.startTimeMs));
+    const endMs = Math.min(durationMs, Math.max(startMs, section.endTimeMs));
+    return {
+      leftPercent: (startMs / durationMs) * 100,
+      widthPercent: ((endMs - startMs) / durationMs) * 100,
+    };
   }
 
   function playbackSeeked(): void {
@@ -1417,12 +1492,18 @@
     if (event.code === 'Space') {
       event.preventDefault();
       void togglePlayback();
-    } else if (key === 'a') {
+    } else if (key === 'q') {
       event.preventDefault();
       skipBy(-3);
+    } else if (key === 'a') {
+      event.preventDefault();
+      skipBy(-1);
     } else if (key === 'e') {
       event.preventDefault();
       skipBy(3);
+    } else if (key === 'd') {
+      event.preventDefault();
+      skipBy(1);
     }
   }
 
@@ -2124,17 +2205,43 @@
     </details>
 
     <span class="timecode">{formatTime(currentTime)}</span>
-    <input
-      class="timeline"
-      type="range"
-      min="0"
-      max={duration || 0}
-      step="0.01"
-      value={currentTime}
-      disabled={!videoUrl || duration <= 0}
-      aria-label="Seek video"
-      oninput={seek}
-    />
+    <div class:disabled={!videoUrl || duration <= 0} class="timeline-control">
+      <div class="timeline-point-track" aria-hidden="true">
+        {#each timelineSections as section, index (section.id)}
+          {@const geometry = timelineSectionGeometry(section)}
+          {#if geometry}
+            <span
+              class:alternate={index % 2 === 1}
+              data-point-label={section.label}
+              style:left={`${geometry.leftPercent}%`}
+              style:width={`${geometry.widthPercent}%`}
+            ></span>
+          {/if}
+        {/each}
+      </div>
+      <input
+        class="timeline"
+        type="range"
+        min="0"
+        max={duration || 0}
+        step="0.01"
+        value={currentTime}
+        disabled={!videoUrl || duration <= 0}
+        aria-label="Seek video"
+        oninput={seek}
+        onpointerdown={beginTimelineInteraction}
+        onpointerup={endTimelineInteraction}
+        onpointercancel={endTimelineInteraction}
+        onblur={endTimelineInteraction}
+      />
+      {#if timelineInteractionVisible}
+        <output
+          class="timeline-point-label"
+          style:left={`${timelineInteractionLeftPercent}%`}
+          aria-live="polite"
+        >{timelineInteractionSection?.label ?? 'Between points'}</output>
+      {/if}
+    </div>
     <span class="timecode duration">{formatTime(duration)}</span>
 
     <div class="transport-divider"></div>

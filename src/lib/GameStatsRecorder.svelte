@@ -659,6 +659,22 @@
     await saveEvent();
   }
 
+  async function saveSpatialConceded(): Promise<void> {
+    if (!currentPoint || spatialAnnotations.length !== 1 || saving) return;
+    eventPointId = currentPoint.id;
+    eventType = 'conceded';
+    resetEventFields('conceded');
+    callahan = false;
+    spatialAnnotations = [{
+      ...spatialAnnotations[0],
+      role: 'scorer',
+      playerId: null,
+    }];
+    spatialDraftStage = 'details';
+    emitSpatialState(false);
+    await saveEvent();
+  }
+
   function carriedHandlerSpatialAnnotation(playerId: number): SpatialDraftAnnotation | null {
     if (!currentPoint) return null;
     const annotation = latestHandlerSpatialAnnotation(currentPoint, playerId);
@@ -2169,6 +2185,7 @@
           <button type="button" onclick={() => chooseSpatialAction('defended')}>Defended</button>
           <button type="button" disabled={saving} onclick={() => void saveSpatialOpponentTurnover()}>Opponent turnover</button>
           <button type="button" onclick={() => chooseSpatialAction('goal')}>Callahan</button>
+          <button type="button" disabled={saving} onclick={() => void saveSpatialConceded()}>Conceded</button>
         {/if}
       </div>
       <p>The marker is manual. Drag it on the video if the position needs adjustment.</p>
