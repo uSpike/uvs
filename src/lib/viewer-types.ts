@@ -1,6 +1,12 @@
 import type { MetadataTimeline } from './metadata';
 import type { GameViewerSettings } from './game-settings';
 
+/** One keyboard command displayed in the viewer's shortcut reference. */
+export interface UVSViewerKeyboardShortcut {
+  key: string;
+  description: string;
+}
+
 /** A manual selection on a specific video frame, expressed in stable panorama coordinates. */
 export interface UVSViewerSpatialPoint {
   timeMs: number;

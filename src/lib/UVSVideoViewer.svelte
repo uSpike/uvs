@@ -6,6 +6,7 @@
     Camera,
     ChevronsLeft,
     ChevronsRight,
+    CircleHelp,
     EllipsisVertical,
     FileVideo,
     Gauge,
@@ -63,6 +64,7 @@
   import { canvasPixelRatio } from './render-resolution';
   import type {
     GameViewerSettings,
+    UVSViewerKeyboardShortcut,
     UVSVideoViewerSource,
     UVSViewerPlaybackMarker,
     UVSViewerPlaybackState,
@@ -82,6 +84,14 @@
   const LEVEL_ORIENTATION = { tilt: 0, roll: 0 };
   const NO_DETECTIONS: WebDetection[] = [];
   const PLAYBACK_RATES = [1, 1.25, 1.5] as const;
+  const VIEWER_KEYBOARD_SHORTCUTS: readonly UVSViewerKeyboardShortcut[] = [
+    { key: 'Space', description: 'Play / pause' },
+    { key: 'A', description: 'Back 3 seconds' },
+    { key: 'E', description: 'Forward 3 seconds' },
+    { key: '+', description: 'Zoom in' },
+    { key: '−', description: 'Zoom out' },
+    { key: '0', description: 'Reset view' },
+  ];
   type PlaybackRate = (typeof PLAYBACK_RATES)[number];
 
   interface PerspectiveFrame {
@@ -127,6 +137,8 @@
   export let onSettingsChange: ((settings: GameViewerSettings) => void) | undefined = undefined;
   /** Optional persistence action rendered beside the camera controls. */
   export let onSaveSettings: (() => void) | undefined = undefined;
+  /** Context-specific commands supplied by the embedding statistics recorder. */
+  export let additionalKeyboardShortcuts: readonly UVSViewerKeyboardShortcut[] = [];
   /** Restrict automatic framing to one video-side endzone; null uses the full field. */
   export let autoCameraEndzone: TeamEndzone | null = null;
   /** Media times where every visible detection becomes a trusted automatic-camera baseline. */
@@ -1404,13 +1416,13 @@
     const key = event.key.toLowerCase();
     if (event.code === 'Space') {
       event.preventDefault();
-      pause();
+      void togglePlayback();
     } else if (key === 'a') {
       event.preventDefault();
-      skipBy(-1);
-    } else if (key === 'd') {
+      skipBy(-3);
+    } else if (key === 'e') {
       event.preventDefault();
-      skipBy(1);
+      skipBy(3);
     }
   }
 
@@ -2217,6 +2229,34 @@
             <span>Save settings</span>
           </button>
         {/if}
+      </div>
+    </details>
+
+    <details class="shortcut-help">
+      <summary class="icon-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+        <CircleHelp size={18} aria-hidden="true" />
+      </summary>
+      <div class="shortcut-help-menu">
+        <strong>Keyboard shortcuts</strong>
+        <section>
+          <h3>Playback &amp; view</h3>
+          <dl>
+            {#each VIEWER_KEYBOARD_SHORTCUTS as shortcut}
+              <div><dt><kbd>{shortcut.key}</kbd></dt><dd>{shortcut.description}</dd></div>
+            {/each}
+          </dl>
+        </section>
+        {#if additionalKeyboardShortcuts.length > 0}
+          <section>
+            <h3>Stats recording</h3>
+            <dl>
+              {#each additionalKeyboardShortcuts as shortcut}
+                <div><dt><kbd>{shortcut.key}</kbd></dt><dd>{shortcut.description}</dd></div>
+              {/each}
+            </dl>
+          </section>
+        {/if}
+        <small>Shortcuts are ignored while typing in a field.</small>
       </div>
     </details>
 

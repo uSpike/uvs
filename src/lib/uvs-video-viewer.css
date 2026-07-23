@@ -827,21 +827,25 @@ main {
   background: #24383b;
 }
 
-.view-options {
+.view-options,
+.shortcut-help {
   position: relative;
   flex: 0 0 auto;
 }
 
-.view-options > summary {
+.view-options > summary,
+.shortcut-help > summary {
   display: inline-flex;
   list-style: none;
 }
 
-.view-options > summary::-webkit-details-marker {
+.view-options > summary::-webkit-details-marker,
+.shortcut-help > summary::-webkit-details-marker {
   display: none;
 }
 
-.view-options[open] > summary {
+.view-options[open] > summary,
+.shortcut-help[open] > summary {
   border-color: #57d6ff;
   color: #d9f6ff;
   background: #24383b;
@@ -896,6 +900,96 @@ main {
 .view-option-action:disabled {
   color: #6d7269;
   cursor: default;
+}
+
+.shortcut-help-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  z-index: 9;
+  width: 270px;
+  max-width: calc(100vw - 16px);
+  max-height: min(520px, 72vh);
+  padding: 10px;
+  overflow-y: auto;
+  border: 1px solid #454a42;
+  border-radius: 6px;
+  background: rgba(24, 26, 23, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+}
+
+.shortcut-help-menu > strong {
+  display: block;
+  margin: 0 2px 9px;
+  color: #f0f3ed;
+  font-size: 12px;
+}
+
+.shortcut-help-menu section + section {
+  padding-top: 9px;
+  margin-top: 9px;
+  border-top: 1px solid #393c37;
+}
+
+.shortcut-help-menu h3 {
+  margin: 0 2px 5px;
+  color: #90978d;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.shortcut-help-menu dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.shortcut-help-menu dl > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.shortcut-help-menu dl > div:hover {
+  background: #242721;
+}
+
+.shortcut-help-menu dt,
+.shortcut-help-menu dd {
+  margin: 0;
+}
+
+.shortcut-help-menu kbd {
+  display: inline-block;
+  min-width: 25px;
+  padding: 2px 6px;
+  border: 1px solid #4b5048;
+  border-bottom-color: #656c60;
+  border-radius: 3px;
+  color: #f2d581;
+  background: #20231e;
+  box-shadow: 0 1px 0 #0f100e;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 760;
+  text-align: center;
+}
+
+.shortcut-help-menu dd {
+  color: #d3d8d0;
+  font-size: 10px;
+}
+
+.shortcut-help-menu > small {
+  display: block;
+  margin: 9px 2px 1px;
+  color: #858b82;
+  font-size: 9px;
 }
 
 .zoom-controls {

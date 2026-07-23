@@ -41,6 +41,9 @@ describe('UVSVideoViewer', () => {
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
     expect(result.body).toContain('Playback speed');
+    expect(result.body).toContain('Keyboard shortcuts');
+    expect(result.body).toContain('Back 3 seconds');
+    expect(result.body).toContain('Forward 3 seconds');
     expect(result.body).toContain('1.25×');
     expect(result.body).toContain('1.5×');
     expect(result.body).toContain('Turn on automatic camera');
@@ -66,5 +69,18 @@ describe('UVSVideoViewer', () => {
     expect(result.body).toContain('Camera orientation');
     expect(result.body).toContain('Save settings');
     expect(result.body).not.toContain('aria-label="Camera controls"');
+  });
+
+  it('includes embedding recorder shortcuts in keyboard help', () => {
+    const result = render(UVSVideoViewer, {
+      props: {
+        additionalKeyboardShortcuts: [
+          { key: 'S', description: 'Mark an action on the video' },
+        ],
+      },
+    });
+
+    expect(result.body).toContain('Stats recording');
+    expect(result.body).toContain('Mark an action on the video');
   });
 });

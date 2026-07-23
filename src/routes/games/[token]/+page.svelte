@@ -5,6 +5,7 @@
   import {
     UVSVideoViewer,
     type GameViewerSettings,
+    type UVSViewerKeyboardShortcut,
     type UVSViewerPlaybackMarker,
     type UVSViewerSpatialMarker,
     type UVSViewerSpatialPoint,
@@ -62,6 +63,11 @@
   const headerScore = $derived(
     calculateScoreAtTime(trackingSnapshot.data, Math.round(viewerPlayback.currentTime * 1000)),
   );
+  const recordingKeyboardShortcuts = $derived(
+    statsEditing
+      ? shortcutsForRecordingMode(currentSettings?.recordingMode ?? data.game.settings.recordingMode)
+      : [],
+  );
 
   const emptyPlayback: UVSViewerPlaybackState = {
     currentTime: 0,
@@ -113,6 +119,33 @@
 
   function saveViewerSettings(): void {
     settingsSaveForm?.requestSubmit();
+  }
+
+  function shortcutsForRecordingMode(
+    mode: GameViewerSettings['recordingMode'],
+  ): UVSViewerKeyboardShortcut[] {
+    const common = [
+      { key: 'Ctrl/⌘ Z', description: 'Undo last action' },
+      { key: 'Ctrl/⌘ ⇧ Z', description: 'Redo last action' },
+      { key: 'F', description: 'Start / end stoppage' },
+    ];
+    return mode === 'video_assisted'
+      ? [
+          { key: 'S', description: 'Mark an action on the video' },
+          { key: 'Esc', description: 'Cancel action placement' },
+          { key: 'T', description: 'Opponent turnover when available' },
+          { key: 'X', description: 'Conceded when available' },
+          ...common,
+        ]
+      : [
+          { key: 'P', description: 'Start possession' },
+          { key: 'C', description: 'Completion' },
+          { key: 'T', description: 'Turnover' },
+          { key: 'G', description: 'Goal / Callahan' },
+          { key: 'X', description: 'Conceded' },
+          { key: 'S', description: 'Substitution' },
+          ...common,
+        ];
   }
 
   function buildActionPlaybackMarkers(snapshot: GameTrackingSnapshot): UVSViewerPlaybackMarker[] {
@@ -300,6 +333,7 @@
           {spatialPlacementActive}
           {spatialMarkers}
           playbackMarkers={actionPlaybackMarkers}
+          additionalKeyboardShortcuts={recordingKeyboardShortcuts}
           onSpatialPointPlace={(point) => statsRecorder?.placeSpatialPoint(point)}
           onSpatialPointAdjust={(index, point) => statsRecorder?.adjustSpatialPoint(index, point)}
           onPlaybackChange={(state) => viewerPlayback = state}
