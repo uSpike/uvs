@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import {
   calculateGameStatistics,
   calculatePointState,
+  type CompletionPayload,
+  type ConcededPayload,
   type DefendedPayload,
   type EventSpatialAnnotation,
   type GameEventPayload,
@@ -10,11 +12,15 @@ import {
   type GameTrackingSnapshot,
   type ManualPlayerGameStatistics,
   type ManualPointSummary,
+  type OpponentTurnoverPayload,
   type PossessionStartPayload,
+  type ScoreSetPayload,
   type StartingPossession,
   type SpatialAnnotationRole,
+  type StoppagePayload,
   type StrategyKind,
   type StrategySetPayload,
+  type SubstitutionPayload,
   type TeamEndzone,
   type TrackingEvent,
   type TrackingGameData,
@@ -22,7 +28,15 @@ import {
   type TrackingPlayer,
   type TrackingPoint,
   type TrackingStrategy,
+  type TurnoverPayload,
+  type GoalPayload,
 } from '$lib/game-stats';
+import type {
+  ExportedGameEvent,
+  ExportedPlayerReference,
+  ExportedStrategyReference,
+  GameStatisticsExportV1,
+} from '$lib/game-stat-transfer';
 import { parseGameEventPayload, parseGameEventType } from '$lib/game-events';
 import { parseOptionalMatchupRole, type MatchupRole } from '$lib/matchup';
 import { getDatabase } from './database';
@@ -189,6 +203,247 @@ export class GameTrackingRepository {
       .filter((data): data is TrackingGameData => data !== null);
   }
 
+  /**
+   * Atomically replace every statistic attached to a game from a validated portable export.
+   * Source roster IDs are resolved to this game's event roster by matching ID/name first,
+   * then by a unique case-insensitive name.
+   */
+  importStatistics(token: string, exported: GameStatisticsExportV1): GameTrackingSnapshot {
+    const game = this.requireGame(token);
+    const destination = this.getGameData(token);
+    if (!destination) throw new Error('Game not found.');
+    const references = new StatisticsReferenceResolver(exported, destination);
+    const points = [...exported.statistics.points]
+      .sort((left, right) => left.sequenceNumber - right.sequenceNumber);
+    points.forEach((point, index) => {
+      if (point.sequenceNumber !== index + 1) {
+        throw new Error('Imported point numbers must be consecutive and start at 1.');
+      }
+      if (index > 0 && point.startTimeMs < points[index - 1].startTimeMs) {
+        throw new Error(`Point ${point.sequenceNumber} cannot begin before the previous point.`);
+      }
+      if (
+        index < points.length - 1 &&
+        !point.events.some((event) => event.type === 'goal' || event.type === 'conceded')
+      ) {
+        throw new Error(`Point ${point.sequenceNumber} must finish before the next point starts.`);
+      }
+    });
+
+    const mappedPoints = points.map((point) => {
+      const playerIds = uniqueIds(
+        point.startingPlayerIds.map((playerId) => references.player(playerId)),
+        `Point ${point.sequenceNumber} player`,
+      );
+      if (playerIds.length === 0) {
+        throw new Error(`Point ${point.sequenceNumber} must include at least one player.`);
+      }
+      const pullerPlayerId = references.optionalPlayer(point.pullerPlayerId);
+      if (pullerPlayerId !== null && !playerIds.includes(pullerPlayerId)) {
+        throw new Error(`Point ${point.sequenceNumber} puller must be active on the point.`);
+      }
+      if (pullerPlayerId !== null && point.startingPossession !== 'defense') {
+        throw new Error(`Point ${point.sequenceNumber} can only have a puller when starting on defense.`);
+      }
+      const matchupRoleOverrides = Object.fromEntries(
+        Object.entries(point.matchupRoleOverrides).map(([sourcePlayerId, role]) => [
+          references.player(Number(sourcePlayerId)),
+          role,
+        ]),
+      );
+      return {
+        sourceId: point.sourceId,
+        sequenceNumber: point.sequenceNumber,
+        lineId: references.line(point.lineId),
+        startingPossession: point.startingPossession,
+        startTimeMs: timecode(point.startTimeMs),
+        pullerPlayerId,
+        lineupEndzoneOverride: optionalEndzone(point.lineupEndzoneOverride),
+        initialOffenseStrategyId: references.optionalStrategy(
+          point.initialOffenseStrategyId,
+          'offense',
+        ),
+        initialDefenseStrategyId: references.optionalStrategy(
+          point.initialDefenseStrategyId,
+          'defense',
+        ),
+        playerIds,
+        matchupRoleOverrides: validatedRoleOverrides(matchupRoleOverrides, playerIds),
+      };
+    });
+    const mappedEvents = [
+      ...points.flatMap((point) =>
+        point.events.map((event) => mapImportedEvent(event, point.sourceId, references)),
+      ),
+      ...exported.statistics.standaloneEvents.map((event) =>
+        mapImportedEvent(event, null, references),
+      ),
+    ].sort((left, right) =>
+      left.event.timeMs - right.event.timeMs || left.event.sourceId - right.event.sourceId
+    );
+    const mappedHighlights = exported.statistics.highlights.map((highlight) => ({
+      startTimeMs: highlight.startTimeMs,
+      endTimeMs: highlight.endTimeMs,
+      description: highlight.description,
+      playerIds: uniqueIds(
+        highlight.playerIds.map((playerId) => references.player(playerId)),
+        'Highlight player',
+      ),
+    }));
+    const mappedManualPlayerStatistics = exported.statistics.manualPlayerStatistics.map(
+      (statistics) => ({
+        ...statistics,
+        playerId: references.player(statistics.playerId),
+      }),
+    );
+    uniqueIds(
+      mappedManualPlayerStatistics.map((statistics) => statistics.playerId),
+      'Paper player',
+    );
+    const manualPoints = [...exported.statistics.manualPoints]
+      .sort((left, right) => left.sequenceNumber - right.sequenceNumber);
+    manualPoints.forEach((point, index) => {
+      if (point.sequenceNumber !== index + 1) {
+        throw new Error('Imported paper point numbers must be consecutive and start at 1.');
+      }
+    });
+    const mappedManualPoints: SaveManualPointInput[] = manualPoints.map((point) => ({
+      lineId: references.line(point.lineId),
+      startingPossession: point.startingPossession,
+      initialDefenseType: point.initialDefenseType,
+      offenseStrategyId: references.optionalStrategy(point.offenseStrategyId, 'offense'),
+      defenseStrategyId: references.optionalStrategy(point.defenseStrategyId, 'defense'),
+      ourTurnovers: point.ourTurnovers,
+      scoringMethod: point.scoringMethod,
+      scorerPlayerId: references.optionalPlayer(point.scorerPlayerId),
+      ourScore: point.ourScore,
+      opponentScore: point.opponentScore,
+    }));
+    const gameMatchupRoleOverrides = Object.entries(
+      exported.statistics.gameMatchupRoleOverrides,
+    ).map(([sourcePlayerId, matchupRole]) => ({
+      playerId: references.player(Number(sourcePlayerId)),
+      matchupRole,
+    }));
+    uniqueIds(
+      gameMatchupRoleOverrides.map((override) => override.playerId),
+      'Game matchup player',
+    );
+
+    return this.database.transaction(() => {
+      this.database.prepare('DELETE FROM game_events WHERE game_id = ?').run(game.id);
+      this.database.prepare('DELETE FROM game_points WHERE game_id = ?').run(game.id);
+      this.database.prepare('DELETE FROM game_highlights WHERE game_id = ?').run(game.id);
+      this.database.prepare('DELETE FROM manual_player_game_statistics WHERE game_id = ?').run(game.id);
+      this.database.prepare('DELETE FROM manual_game_points WHERE game_id = ?').run(game.id);
+      this.database.prepare('DELETE FROM game_player_matchup_overrides WHERE game_id = ?').run(game.id);
+      this.database
+        .prepare(
+          `UPDATE games
+              SET initial_our_score = ?, initial_opponent_score = ?,
+                  initial_lineup_endzone = ?,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?`,
+        )
+        .run(
+          exported.baseline.initialOurScore,
+          exported.baseline.initialOpponentScore,
+          requiredEndzone(exported.baseline.initialLineupEndzone),
+          game.id,
+        );
+
+      const insertGameRole = this.database.prepare(
+        `INSERT INTO game_player_matchup_overrides (game_id, player_id, matchup_role)
+         VALUES (?, ?, ?)`,
+      );
+      gameMatchupRoleOverrides.forEach((override) =>
+        insertGameRole.run(game.id, override.playerId, override.matchupRole)
+      );
+
+      const targetPointIds = new Map<number, number>();
+      const insertPoint = this.database.prepare(
+        `INSERT INTO game_points (
+           game_id, sequence_number, line_id, starting_possession,
+           start_time_ms, puller_player_id, initial_offense_strategy_id,
+           initial_defense_strategy_id, lineup_endzone_override
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const insertPointPlayer = this.database.prepare(
+        'INSERT INTO game_point_players (point_id, player_id, sort_order) VALUES (?, ?, ?)',
+      );
+      for (const point of mappedPoints) {
+        const result = insertPoint.run(
+          game.id,
+          point.sequenceNumber,
+          point.lineId,
+          point.startingPossession,
+          point.startTimeMs,
+          point.pullerPlayerId,
+          point.initialOffenseStrategyId,
+          point.initialDefenseStrategyId,
+          point.lineupEndzoneOverride,
+        );
+        const pointId = Number(result.lastInsertRowid);
+        targetPointIds.set(point.sourceId, pointId);
+        point.playerIds.forEach((playerId, index) =>
+          insertPointPlayer.run(pointId, playerId, index)
+        );
+        this.replacePointMatchupOverrides(pointId, point.matchupRoleOverrides);
+      }
+
+      const insertEvent = this.database.prepare(
+        `INSERT INTO game_events (game_id, point_id, time_ms, type, payload_json)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const mapped of mappedEvents) {
+        const pointId = mapped.pointSourceId === null
+          ? null
+          : targetPointIds.get(mapped.pointSourceId) ?? null;
+        if (mapped.pointSourceId !== null && pointId === null) {
+          throw new Error('Imported event references an unavailable point.');
+        }
+        const parsed = this.validateEventInput(game, {
+          pointId,
+          timeMs: mapped.event.timeMs,
+          type: mapped.event.type,
+          payload: mapped.payload,
+          annotations: mapped.annotations,
+        }, null);
+        const result = insertEvent.run(
+          game.id,
+          parsed.pointId,
+          parsed.timeMs,
+          parsed.type,
+          JSON.stringify(parsed.payload),
+        );
+        this.replaceEventAnnotations(Number(result.lastInsertRowid), parsed.annotations ?? []);
+      }
+
+      const insertHighlight = this.database.prepare(
+        `INSERT INTO game_highlights (game_id, start_time_ms, end_time_ms, description)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const highlight of mappedHighlights) {
+        const parsed = this.validateHighlightInput(game, highlight);
+        const result = insertHighlight.run(
+          game.id,
+          parsed.startTimeMs,
+          parsed.endTimeMs,
+          parsed.description,
+        );
+        this.replaceHighlightPlayers(Number(result.lastInsertRowid), parsed.playerIds);
+      }
+
+      if (mappedManualPlayerStatistics.length > 0 || mappedManualPoints.length > 0) {
+        this.saveManualSummary(token, {
+          playerStatistics: mappedManualPlayerStatistics,
+          points: mappedManualPoints,
+        });
+      }
+      return this.requiredSnapshot(token);
+    })();
+  }
+
   /** Begin a point and save its initial active players atomically. */
   startPoint(token: string, input: StartPointInput): GameTrackingSnapshot {
     const game = this.requireGame(token);
@@ -309,6 +564,7 @@ export class GameTrackingRepository {
       );
       playerIds.forEach((playerId, index) => insertPlayer.run(point.id, playerId, index));
       this.replacePointMatchupOverrides(point.id, matchupRoleOverrides);
+      this.validatePointTimeline(game, point.id);
     })();
     return this.requiredSnapshot(token);
   }
@@ -355,8 +611,8 @@ export class GameTrackingRepository {
   updateEvent(token: string, eventId: number, input: SaveEventInput): GameTrackingSnapshot {
     const game = this.requireGame(token);
     const existing = this.database
-      .prepare('SELECT id FROM game_events WHERE id = ? AND game_id = ?')
-      .get(eventId, game.id) as { id: number } | undefined;
+      .prepare('SELECT id, point_id FROM game_events WHERE id = ? AND game_id = ?')
+      .get(eventId, game.id) as { id: number; point_id: number | null } | undefined;
     if (!existing) throw new Error('Event not found.');
     const parsed = this.validateEventInput(game, input, eventId);
     this.database.transaction(() => {
@@ -371,6 +627,10 @@ export class GameTrackingRepository {
       if (parsed.annotations !== undefined) {
         this.replaceEventAnnotations(eventId, parsed.annotations);
       }
+      const affectedPointIds = new Set(
+        [existing.point_id, parsed.pointId].filter((pointId): pointId is number => pointId !== null),
+      );
+      affectedPointIds.forEach((pointId) => this.validatePointTimeline(game, pointId));
     })();
     return this.requiredSnapshot(token);
   }
@@ -917,6 +1177,27 @@ export class GameTrackingRepository {
     };
   }
 
+  private validatePointTimeline(game: GameTrackingRow, pointId: number): void {
+    const point = this.getGameData(game.token)?.points.find((candidate) => candidate.id === pointId);
+    if (!point) throw new Error('Point not found.');
+    for (const event of point.events) {
+      try {
+        this.validateEventInput(game, {
+          pointId,
+          timeMs: event.timeMs,
+          type: event.type,
+          payload: event.payload,
+          annotations: event.annotations.map(({ id: _id, ...annotation }) => annotation),
+        }, event.id);
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : 'The action is invalid.';
+        throw new Error(
+          `This change makes ${event.type.replaceAll('_', ' ')} at ${formatMilliseconds(event.timeMs)} invalid: ${message}`,
+        );
+      }
+    }
+  }
+
   private validateEventAnnotations(
     game: GameTrackingRow,
     annotations: SaveEventSpatialAnnotationInput[] | undefined,
@@ -1164,6 +1445,203 @@ export class GameTrackingRepository {
   }
 }
 
+class StatisticsReferenceResolver {
+  private readonly sourcePlayers: Map<number, ExportedPlayerReference>;
+  private readonly sourceLines: Map<number, { id: number; name: string }>;
+  private readonly sourceStrategies: Map<number, ExportedStrategyReference>;
+  private readonly playerCache = new Map<number, number>();
+  private readonly lineCache = new Map<number, number>();
+  private readonly strategyCache = new Map<number, number>();
+
+  constructor(
+    exported: GameStatisticsExportV1,
+    private readonly destination: TrackingGameData,
+  ) {
+    this.sourcePlayers = new Map(
+      exported.references.players.map((reference) => [reference.id, reference]),
+    );
+    this.sourceLines = new Map(
+      exported.references.lines.map((reference) => [reference.id, reference]),
+    );
+    this.sourceStrategies = new Map(
+      exported.references.strategies.map((reference) => [reference.id, reference]),
+    );
+  }
+
+  player(sourceId: number): number {
+    const cached = this.playerCache.get(sourceId);
+    if (cached !== undefined) return cached;
+    const source = this.sourcePlayers.get(sourceId);
+    if (!source) throw new Error(`Imported player ${sourceId} is missing from the file references.`);
+    const destinationId = resolveNamedReference(
+      source,
+      this.destination.players,
+      'Player',
+      "this game's event roster",
+    );
+    this.playerCache.set(sourceId, destinationId);
+    return destinationId;
+  }
+
+  optionalPlayer(sourceId: number | null): number | null {
+    return sourceId === null ? null : this.player(sourceId);
+  }
+
+  line(sourceId: number): number {
+    const cached = this.lineCache.get(sourceId);
+    if (cached !== undefined) return cached;
+    const source = this.sourceLines.get(sourceId);
+    if (!source) throw new Error(`Imported line ${sourceId} is missing from the file references.`);
+    const destinationId = resolveNamedReference(
+      source,
+      this.destination.lines,
+      'Line',
+      "this game's event",
+    );
+    this.lineCache.set(sourceId, destinationId);
+    return destinationId;
+  }
+
+  optionalStrategy(sourceId: number | null, kind: StrategyKind): number | null {
+    if (sourceId === null) return null;
+    const cached = this.strategyCache.get(sourceId);
+    if (cached !== undefined) {
+      const destination = this.destination.strategies.find((strategy) => strategy.id === cached);
+      if (!destination || destination.kind !== kind) {
+        throw new Error(`Imported ${kind} strategy is invalid.`);
+      }
+      return cached;
+    }
+    const source = this.sourceStrategies.get(sourceId);
+    if (!source) {
+      throw new Error(`Imported ${kind} strategy ${sourceId} is missing from the file references.`);
+    }
+    if (source.kind !== kind) throw new Error(`Imported strategy "${source.name}" is not an ${kind}.`);
+    const destinationId = resolveNamedReference(
+      source,
+      this.destination.strategies.filter((strategy) => strategy.kind === kind),
+      kind === 'offense' ? 'Offense' : 'Defense',
+      'this season roster',
+    );
+    this.strategyCache.set(sourceId, destinationId);
+    return destinationId;
+  }
+}
+
+function resolveNamedReference(
+  source: { id: number; name: string },
+  destinations: Array<{ id: number; name: string }>,
+  label: string,
+  destinationLabel: string,
+): number {
+  const normalizedName = source.name.trim().toLocaleLowerCase();
+  const sameId = destinations.find(
+    (destination) =>
+      destination.id === source.id &&
+      destination.name.trim().toLocaleLowerCase() === normalizedName,
+  );
+  if (sameId) return sameId.id;
+  const named = destinations.filter(
+    (destination) => destination.name.trim().toLocaleLowerCase() === normalizedName,
+  );
+  if (named.length === 1) return named[0].id;
+  if (named.length === 0) {
+    throw new Error(`${label} "${source.name}" is not available in ${destinationLabel}.`);
+  }
+  throw new Error(`${label} "${source.name}" is ambiguous in ${destinationLabel}.`);
+}
+
+function mapImportedEvent(
+  event: ExportedGameEvent,
+  pointSourceId: number | null,
+  references: StatisticsReferenceResolver,
+): {
+  event: ExportedGameEvent;
+  pointSourceId: number | null;
+  payload: GameEventPayload;
+  annotations: SaveEventSpatialAnnotationInput[];
+} {
+  return {
+    event,
+    pointSourceId,
+    payload: remapEventPayload(event.type, event.payload, references),
+    annotations: event.annotations.map((annotation) => ({
+      ...annotation,
+      playerId: references.optionalPlayer(annotation.playerId),
+    })),
+  };
+}
+
+function remapEventPayload(
+  type: GameEventType,
+  payload: GameEventPayload,
+  references: StatisticsReferenceResolver,
+): GameEventPayload {
+  switch (type) {
+    case 'possession_start': {
+      const value = payload as PossessionStartPayload;
+      return { playerId: references.optionalPlayer(value.playerId) };
+    }
+    case 'completion': {
+      const value = payload as CompletionPayload;
+      return {
+        throwerId: references.optionalPlayer(value.throwerId),
+        receiverId: references.optionalPlayer(value.receiverId),
+      };
+    }
+    case 'turnover': {
+      const value = payload as TurnoverPayload;
+      return {
+        throwerId: references.optionalPlayer(value.throwerId),
+        intendedReceiverId: references.optionalPlayer(value.intendedReceiverId),
+        reason: value.reason,
+      };
+    }
+    case 'defended': {
+      const value = payload as DefendedPayload;
+      return { defenderId: references.optionalPlayer(value.defenderId) };
+    }
+    case 'opponent_turnover': {
+      const value = payload as OpponentTurnoverPayload;
+      return { reason: value.reason };
+    }
+    case 'goal': {
+      const value = payload as GoalPayload;
+      return {
+        throwerId: references.optionalPlayer(value.throwerId),
+        receiverId: references.optionalPlayer(value.receiverId),
+        callahan: value.callahan,
+      };
+    }
+    case 'conceded': {
+      const value = payload as ConcededPayload;
+      return { callahan: value.callahan };
+    }
+    case 'substitution': {
+      const value = payload as SubstitutionPayload;
+      return {
+        outgoingPlayerId: references.optionalPlayer(value.outgoingPlayerId),
+        incomingPlayerId: references.optionalPlayer(value.incomingPlayerId),
+      };
+    }
+    case 'stoppage': {
+      const value = payload as StoppagePayload;
+      return { kind: value.kind, endTimeMs: value.endTimeMs };
+    }
+    case 'score_set': {
+      const value = payload as ScoreSetPayload;
+      return { ourScore: value.ourScore, opponentScore: value.opponentScore };
+    }
+    case 'strategy_set': {
+      const value = payload as StrategySetPayload;
+      return {
+        kind: value.kind,
+        strategyId: references.optionalStrategy(value.strategyId, value.kind)!,
+      };
+    }
+  }
+}
+
 function gameQuery(suffix: string): string {
   return `SELECT games.id, games.token, games.title, teams.name AS team_name,
                  teams.slug AS team_slug, tournaments.id AS tournament_id,
@@ -1291,6 +1769,10 @@ function present(values: Array<number | null>): number[] {
 function timecode(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('Timecode must be a non-negative whole number of milliseconds.');
   return value;
+}
+
+function formatMilliseconds(value: number): string {
+  return `${(value / 1_000).toFixed(3).replace(/\.?0+$/, '')}s`;
 }
 
 function nonNegativeInteger(value: number, name: string): number {

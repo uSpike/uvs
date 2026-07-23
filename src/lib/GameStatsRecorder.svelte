@@ -24,12 +24,14 @@
   import type { GameRecordingMode } from './game-settings';
   import type { UVSViewerSpatialMarker, UVSViewerSpatialPoint } from './viewer-types';
   import { gameEventLabel } from './game-events';
+  import { MAX_GAME_STATISTICS_EXPORT_BYTES } from './game-stat-transfer';
   import type { MatchupRole } from './matchup';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
 
   interface PlaybackSnapshot {
     currentTime: number;
     playing: boolean;
+    frameIndex?: number;
   }
 
   let {
@@ -247,7 +249,65 @@
     else void acquireLock(false);
   }
 
-  async function acquireLock(takeover = false): Promise<void> {
+  /** Replace this game's statistics from a validated UVS JSON export. */
+  export async function importStatistics(
+    file: File,
+  ): Promise<{ ok: boolean; error?: string }> {
+    mutationError = '';
+    if (file.size > MAX_GAME_STATISTICS_EXPORT_BYTES) {
+      mutationError = 'Statistics file is larger than 25 MB.';
+      return { ok: false, error: mutationError };
+    }
+    if (draftMode !== null) {
+      mutationError = 'Finish or cancel the current edit before importing statistics.';
+      return { ok: false, error: mutationError };
+    }
+    if (!editing && !await acquireLock(false)) {
+      const error = lockHeldElsewhere
+        ? 'Another player is editing this game.'
+        : lockError || 'The editing lock could not be acquired.';
+      return { ok: false, error };
+    }
+    if (!lockToken) return { ok: false, error: 'The editing lock could not be acquired.' };
+
+    saving = true;
+    redoEvent = null;
+    try {
+      const response = await fetch(resolve(`/api/games/${token}/stats-transfer`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-uvs-edit-token': lockToken,
+        },
+        body: file,
+      });
+      const result = await response.json() as GameTrackingSnapshot | { error?: string };
+      if (!response.ok) {
+        const error = 'error' in result
+          ? result.error ?? 'Statistics could not be imported.'
+          : 'Statistics could not be imported.';
+        if (response.status === 409) loseLock(error);
+        else mutationError = error;
+        return { ok: false, error };
+      }
+      snapshot = result as GameTrackingSnapshot;
+      onSnapshotChange(snapshot);
+      resetManualDrafts(snapshot);
+      draftMode = null;
+      clearSpatialDraft();
+      seekToLastRecordedPointTime();
+      return { ok: true };
+    } catch (caught) {
+      mutationError = caught instanceof Error
+        ? caught.message
+        : 'Statistics could not be imported.';
+      return { ok: false, error: mutationError };
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function acquireLock(takeover = false): Promise<boolean> {
     lockError = '';
     lockHeldElsewhere = false;
     try {
@@ -259,11 +319,11 @@
       const result = await response.json() as { acquired?: boolean; token?: string | null; error?: string };
       if (response.status === 409) {
         lockHeldElsewhere = true;
-        return;
+        return false;
       }
       if (!response.ok || !result.acquired || !result.token) {
         lockError = result.error ?? 'The editing lock could not be acquired.';
-        return;
+        return false;
       }
       lockToken = result.token;
       editing = true;
@@ -273,8 +333,10 @@
       seekToLastRecordedPointTime();
       await refreshSnapshotForEditing();
       if (editing && lockToken === result.token) seekToLastRecordedPointTime();
+      return true;
     } catch (caught) {
       lockError = caught instanceof Error ? caught.message : 'The editing lock could not be acquired.';
+      return false;
     }
   }
 
@@ -969,6 +1031,13 @@
     draftMode = 'event';
   }
 
+  function openTimelineItemEditor(item: ReturnType<typeof timelineItems>[number]): void {
+    if (!editing) return;
+    redoEvent = null;
+    if (item.kind === 'point') openPointEditor(item.point);
+    else openEventEditor(item.event);
+  }
+
   function resetEventFields(type: GameEventType, payload?: GameEventPayload): void {
     firstPlayerId = '';
     secondPlayerId = '';
@@ -1226,14 +1295,23 @@
 
   async function saveEvent(): Promise<void> {
     const positionedAnnotation = spatialDraft ? spatialAnnotations.at(-1) : null;
+    const playbackPosition = getPlayback();
     eventTimeSeconds = positionedAnnotation
       ? positionedAnnotation.timeMs / 1000
-      : currentSeconds();
+      : Math.max(0, playbackPosition.currentTime);
+    const eventTimeMs = Math.round(eventTimeSeconds * 1000);
+    const editedAnnotations = !spatialDraft && editingEventId !== null
+      ? annotationsForEditedEvent(
+          editingEventId,
+          eventTimeMs,
+          playbackPosition.frameIndex,
+        )
+      : null;
     const result = await mutate({
       operation: editingEventId === null ? 'addEvent' : 'updateEvent',
       eventId: editingEventId,
       pointId: eventType === 'score_set' ? null : eventPointId,
-      timeMs: Math.round(eventTimeSeconds * 1000),
+      timeMs: eventTimeMs,
       type: eventType,
       payload: eventPayload(),
       ...(spatialDraft ? {
@@ -1245,10 +1323,64 @@
           panoramaYaw: annotation.panoramaYaw,
           panoramaPitch: annotation.panoramaPitch,
         })),
-      } : {}),
+      } : editedAnnotations ? { annotations: editedAnnotations } : {}),
     });
     if (!result) return;
     closeDraft();
+  }
+
+  function annotationsForEditedEvent(
+    eventId: number,
+    eventTimeMs: number,
+    frameIndex: number | undefined,
+  ): Array<Omit<EventSpatialAnnotation, 'id'>> | null {
+    const event = [
+      ...snapshot.data.points.flatMap((point) => point.events),
+      ...snapshot.data.standaloneEvents,
+    ].find((candidate) => candidate.id === eventId);
+    if (!event || event.annotations.length === 0) return null;
+    const occurrenceRoles = new Set<SpatialAnnotationRole>([
+      'handler',
+      'receiver',
+      'intended_receiver',
+      'defender',
+      'turnover_location',
+      'scorer',
+      'outgoing_player',
+      'incoming_player',
+    ]);
+    return event.annotations.map(({ id: _id, ...annotation }) => ({
+      ...annotation,
+      playerId: editedAnnotationPlayerId(annotation.role, annotation.playerId),
+      ...(occurrenceRoles.has(annotation.role) ? {
+        timeMs: eventTimeMs,
+        ...(frameIndex === undefined ? {} : { frameIndex }),
+      } : {}),
+    }));
+  }
+
+  function editedAnnotationPlayerId(
+    role: SpatialAnnotationRole,
+    existingPlayerId: number | null,
+  ): number | null {
+    const first = firstPlayerId ? Number(firstPlayerId) : null;
+    const second = secondPlayerId ? Number(secondPlayerId) : null;
+    switch (role) {
+      case 'handler':
+      case 'defender':
+      case 'outgoing_player':
+        return first;
+      case 'thrower':
+        return eventType === 'goal' && callahan ? null : first;
+      case 'receiver':
+      case 'intended_receiver':
+      case 'incoming_player':
+        return second;
+      case 'scorer':
+        return eventType === 'goal' ? second : existingPlayerId;
+      case 'turnover_location':
+        return existingPlayerId;
+    }
   }
 
   async function closeOpenStoppage(): Promise<void> {
@@ -1522,6 +1654,15 @@
       <span>{snapshot.data.game.opponentName}</span>
       <strong>{displayedScore.opponentScore}</strong>
     </div>
+    <div
+      class="final-score"
+      aria-label={`Final score: ${snapshot.data.game.teamName} ${snapshot.statistics.ourScore}, ${snapshot.data.game.opponentName} ${snapshot.statistics.opponentScore}`}
+    >
+      <span>Final</span>
+      <strong>{snapshot.statistics.ourScore}</strong>
+      <b>–</b>
+      <strong>{snapshot.statistics.opponentScore}</strong>
+    </div>
   </header>
 
   {#if lockHeldElsewhere}
@@ -1564,7 +1705,7 @@
           <p class="pull-instructions">Select the players, resume the video, then mark the pull release. The current video time will be captured automatically.</p>
         {:else}
           <div class="frame-position">
-            <span>Video position</span>
+            <span>Pull time</span>
             <div class="frame-stepper">
               <button type="button" onclick={() => stepDraftFrame(-10)}>−10 frames</button>
               <button type="button" onclick={() => stepDraftFrame(-1)}>−1 frame</button>
@@ -1659,7 +1800,7 @@
           </select></label>
         {/if}
         <div class="frame-position">
-          <span>Video position</span>
+          <span>Action time</span>
           <div class="frame-stepper">
             <button type="button" onclick={() => stepDraftFrame(-10)}>−10 frames</button>
             <button type="button" onclick={() => stepDraftFrame(-1)}>−1 frame</button>
@@ -1959,14 +2100,25 @@
                   <span>{item.kind === 'point' ? 'Pull' : gameEventLabel(item.event.type)}</span>
                   <small>{item.kind === 'point' ? `${recordLine?.name ?? 'Unknown line'} · ${persistedPointMatchup(item.point)?.toUpperCase() ?? 'unclassified'}` : eventDescription(item.event)}</small>
                 </button>
-                {#if editing && timelineItemIsLast(item)}
-                  <button
-                    class="recent-undo"
-                    type="button"
-                    onclick={() => void undoLastTimelineEntry()}
-                    disabled={saving}
-                    title={undoTimelineEntryLabel()}
-                  ><RotateCcw size={13} />Undo</button>
+                {#if editing}
+                  <div class="recent-row-actions">
+                    <button
+                      class="recent-edit"
+                      type="button"
+                      onclick={() => openTimelineItemEditor(item)}
+                      disabled={saving}
+                      title={item.kind === 'point' ? 'Edit pull time and starting players' : 'Edit action time and players'}
+                    ><Edit3 size={13} />Edit</button>
+                    {#if timelineItemIsLast(item)}
+                      <button
+                        class="recent-undo"
+                        type="button"
+                        onclick={() => void undoLastTimelineEntry()}
+                        disabled={saving}
+                        title={undoTimelineEntryLabel()}
+                      ><RotateCcw size={13} />Undo</button>
+                    {/if}
+                  </div>
                 {/if}
               </div>
             {/each}
@@ -2229,7 +2381,7 @@
   .stats-panel { display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; color:#e9eee7; background:#181b17; border-left:1px solid #353934; }
   button, select, input { font:inherit; }
   button { cursor:pointer; }
-  .score-header { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:7px; min-height:66px; padding:9px 14px; border-bottom:1px solid #353934; background:linear-gradient(180deg,#242721 0%,#1e211d 100%); }
+  .score-header { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:7px; min-height:66px; padding:9px 14px 7px; border-bottom:1px solid #353934; background:linear-gradient(180deg,#242721 0%,#1e211d 100%); }
   .score-team { display:grid; grid-template-columns:minmax(0,1fr) 42px; align-items:center; gap:10px; min-width:0; }
   .score-team span { overflow:hidden; color:#c9cec6; font-size:12px; font-weight:650; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
   .score-team strong { display:grid; place-items:center; width:42px; height:42px; border:1px solid #4a5147; border-radius:6px; color:#fff; background:#151814; box-shadow:inset 0 1px 0 rgba(255,255,255,.04); font-size:27px; font-variant-numeric:tabular-nums; line-height:1; }
@@ -2238,6 +2390,10 @@
   .score-team.opponent strong { grid-column:1; grid-row:1; }
   .score-team.opponent span { grid-column:2; grid-row:1; text-align:right; }
   .score-separator { color:#8b9288; font-size:18px; font-weight:700; }
+  .final-score { grid-column:1 / -1; display:flex; align-items:center; justify-content:center; gap:5px; color:#92998f; font-size:9px; font-variant-numeric:tabular-nums; line-height:1; }
+  .final-score span { margin-right:2px; text-transform:uppercase; letter-spacing:.08em; }
+  .final-score strong { color:#bdc4ba; font-size:10px; }
+  .final-score b { color:#737a71; font-size:9px; }
   .lock-banner,.mutation-error { display:flex; align-items:center; gap:7px; padding:8px 10px; border-bottom:1px solid #6d5c2a; color:#f3d987; background:#332f20; font-size:11px; }
   .lock-banner.error,.mutation-error { border-color:#7c3b40; color:#ffb4b8; background:#352124; }
   .lock-banner span { flex:1; }
@@ -2354,9 +2510,13 @@
   .recent-row.latest .recent-row-main { color:#fff4ce; }
   .recent-row.latest .recent-row-main time { color:#d8b74e; }
   .recent-row.latest .recent-row-main small { color:#b8ae8a; }
-  .recent-undo { display:flex; align-items:center; align-self:center; gap:4px; min-height:26px; margin:4px 7px 4px 0; padding:0 7px; border:1px solid #806d32; border-radius:3px; color:#e1c76d; background:#3a321d; font-size:9px; font-weight:700; }
+  .recent-row-actions { display:flex; align-items:center; gap:4px; margin:4px 7px 4px 0; }
+  .recent-edit,.recent-undo { display:flex; align-items:center; gap:4px; min-height:26px; padding:0 7px; border-radius:3px; font-size:9px; font-weight:700; }
+  .recent-edit { border:1px solid #496b72; color:#a9dce5; background:#203439; }
+  .recent-edit:hover { border-color:#62949e; background:#29454b; }
+  .recent-undo { border:1px solid #806d32; color:#e1c76d; background:#3a321d; }
   .recent-undo:hover { border-color:#ae9133; background:#493d20; }
-  .recent-undo:disabled { cursor:not-allowed; opacity:.4; }
+  .recent-edit:disabled,.recent-undo:disabled { cursor:not-allowed; opacity:.4; }
   .quality-warnings { margin:10px 12px; padding:9px; border:1px solid #6d5c2a; border-radius:4px; color:#dfc777; background:#2e2a1e; }
   .quality-warnings header { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
   .quality-warnings header strong { flex:1; font-size:10px; }

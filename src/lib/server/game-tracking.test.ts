@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type Database from 'better-sqlite3';
 import { calculatePointState } from '$lib/game-stats';
+import {
+  createGameStatisticsExport,
+  parseGameStatisticsExport,
+} from '$lib/game-stat-transfer';
 import { parseMetadataJsonl } from '$lib/metadata';
 import { CatalogRepository } from './catalog';
 import { openDatabase } from './database';
@@ -73,6 +77,141 @@ function configuredGame() {
 }
 
 describe('GameTrackingRepository', () => {
+  it('exports and atomically restores complete game statistics', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    tracking.setInitialLineupEndzone(game.token, 'right');
+    tracking.setGameMatchupRole(game.token, players.alex, 'fmp');
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'offense',
+      startTimeMs: 1_000,
+      pullerPlayerId: null,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: { [players.casey]: 'fmp' },
+      lineupEndzoneOverride: 'left',
+    }).currentPointId!;
+    tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'completion',
+      payload: { throwerId: players.alex, receiverId: players.blair },
+      annotations: [{
+        role: 'receiver',
+        playerId: players.blair,
+        timeMs: 2_000,
+        frameIndex: 60,
+        panoramaYaw: 0.25,
+        panoramaPitch: -0.03,
+      }],
+    });
+    tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 3_000,
+      type: 'goal',
+      payload: { throwerId: players.blair, receiverId: players.casey, callahan: false },
+    });
+    tracking.addEvent(game.token, {
+      pointId: null,
+      timeMs: 4_000,
+      type: 'score_set',
+      payload: { ourScore: 3, opponentScore: 2 },
+    });
+    tracking.addHighlight(game.token, {
+      startTimeMs: 1_500,
+      endTimeMs: 3_500,
+      description: 'Give-and-go score',
+      playerIds: [players.alex, players.blair, players.casey],
+    });
+    tracking.saveManualSummary(game.token, {
+      playerStatistics: [{
+        playerId: players.alex,
+        pointsPlayed: 1,
+        hockeyAssists: 1,
+        assists: 0,
+        goals: 0,
+        blocks: 0,
+      }],
+      points: [],
+    });
+
+    const exported = parseGameStatisticsExport(JSON.parse(JSON.stringify(
+      createGameStatisticsExport(tracking.getSnapshot(game.token)!.data, '2026-07-23T12:00:00.000Z'),
+    )) as unknown);
+    const original = tracking.getSnapshot(game.token)!;
+    tracking.deletePoint(game.token, pointId);
+    tracking.deleteHighlight(game.token, original.data.highlights[0].id);
+    tracking.setInitialLineupEndzone(game.token, 'left');
+    tracking.setGameMatchupRole(game.token, players.alex, null);
+    tracking.saveManualSummary(game.token, { playerStatistics: [], points: [] });
+
+    const restored = tracking.importStatistics(game.token, exported);
+    expect(restored.data.game.initialLineupEndzone).toBe('right');
+    expect(restored.statistics).toMatchObject({ ourScore: 3, opponentScore: 2 });
+    expect(restored.data.players.find((player) => player.id === players.alex))
+      .toMatchObject({ gameMatchupRoleOverride: 'fmp' });
+    expect(restored.data.points).toHaveLength(1);
+    expect(restored.data.points[0]).toMatchObject({
+      sequenceNumber: 1,
+      lineId,
+      lineupEndzoneOverride: 'left',
+      matchupRoleOverrides: { [players.casey]: 'fmp' },
+    });
+    expect(restored.data.points[0].events.map((event) => event.type))
+      .toEqual(['completion', 'goal']);
+    expect(restored.data.points[0].events[0].annotations[0]).toMatchObject({
+      role: 'receiver',
+      playerId: players.blair,
+      frameIndex: 60,
+      panoramaYaw: 0.25,
+    });
+    expect(restored.data.standaloneEvents).toHaveLength(1);
+    expect(restored.data.highlights[0]).toMatchObject({
+      description: 'Give-and-go score',
+      playerIds: [players.alex, players.blair, players.casey],
+    });
+    expect(restored.data.manualPlayerStatistics).toEqual([{
+      playerId: players.alex,
+      pointsPlayed: 1,
+      hockeyAssists: 1,
+      assists: 0,
+      goals: 0,
+      blocks: 0,
+    }]);
+  });
+
+  it('rolls back a statistics import when an event is invalid', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'offense',
+      startTimeMs: 1_000,
+      pullerPlayerId: null,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: {},
+    }).currentPointId!;
+    tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'completion',
+      payload: { throwerId: players.alex, receiverId: players.blair },
+    });
+    const before = tracking.getSnapshot(game.token)!;
+    const exported = createGameStatisticsExport(before.data);
+    exported.statistics.points[0].events[0].payload = {
+      throwerId: players.alex,
+      receiverId: players.devon,
+    };
+
+    expect(() => tracking.importStatistics(game.token, exported))
+      .toThrow('active at that timecode');
+    const after = tracking.getSnapshot(game.token)!;
+    expect(after.data.points[0].id).toBe(before.data.points[0].id);
+    expect(after.data.points[0].events[0]).toMatchObject({
+      id: before.data.points[0].events[0].id,
+      payload: { throwerId: players.alex, receiverId: players.blair },
+    });
+  });
+
   it('persists the game starting endzone and point overrides', () => {
     const { tracking, game, lineId, players } = configuredGame();
     expect(tracking.getSnapshot(game.token)!.data.game.initialLineupEndzone).toBe('left');
@@ -617,5 +756,80 @@ describe('GameTrackingRepository', () => {
     const reopened = tracking.deleteEvent(game.token, goal.id);
     expect(reopened.currentPointId).toBe(pointId);
     expect(reopened.statistics).toMatchObject({ ourScore: 0, opponentScore: 0 });
+  });
+
+  it('edits historical action reasons while protecting the downstream timeline', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    const pointId = tracking.startPoint(game.token, {
+      lineId,
+      startingPossession: 'offense',
+      startTimeMs: 1_000,
+      pullerPlayerId: null,
+      playerIds: [players.alex, players.blair, players.casey],
+      matchupRoleOverrides: {},
+    }).currentPointId!;
+    const turnover = tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 2_000,
+      type: 'turnover',
+      payload: {
+        throwerId: players.alex,
+        intendedReceiverId: players.blair,
+        reason: 'throwaway',
+      },
+    }).data.points[0].events[0];
+    tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 3_000,
+      type: 'defended',
+      payload: { defenderId: players.casey },
+    });
+    tracking.addEvent(game.token, {
+      pointId,
+      timeMs: 4_000,
+      type: 'goal',
+      payload: { throwerId: players.alex, receiverId: players.blair, callahan: false },
+    });
+
+    const edited = tracking.updateEvent(game.token, turnover.id, {
+      pointId,
+      timeMs: 2_100,
+      type: 'turnover',
+      payload: {
+        throwerId: players.alex,
+        intendedReceiverId: players.blair,
+        reason: 'block',
+      },
+    });
+    expect(edited.data.points[0].events[0]).toMatchObject({
+      timeMs: 2_100,
+      type: 'turnover',
+      payload: { reason: 'block' },
+    });
+    expect(edited.data.points[0].events.map((event) => event.type))
+      .toEqual(['turnover', 'defended', 'goal']);
+
+    expect(() => tracking.updateEvent(game.token, turnover.id, {
+      pointId,
+      timeMs: 2_100,
+      type: 'completion',
+      payload: { throwerId: players.alex, receiverId: players.blair },
+    })).toThrow('makes defended');
+    expect(tracking.getSnapshot(game.token)!.data.points[0].events[0]).toMatchObject({
+      timeMs: 2_100,
+      type: 'turnover',
+      payload: { reason: 'block' },
+    });
+
+    expect(() => tracking.updatePoint(game.token, pointId, {
+      lineId,
+      startingPossession: 'offense',
+      startTimeMs: 1_000,
+      pullerPlayerId: null,
+      playerIds: [players.blair, players.casey, players.devon],
+      matchupRoleOverrides: {},
+    })).toThrow('makes turnover');
+    expect(tracking.getSnapshot(game.token)!.data.points[0].startingPlayerIds)
+      .toEqual([players.alex, players.blair, players.casey]);
   });
 });
