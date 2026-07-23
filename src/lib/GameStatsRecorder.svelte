@@ -1705,11 +1705,6 @@
           <fieldset class="quick-player-picker required-picker">
             <legend>Defender</legend>
             <div>
-              <button
-                type="button"
-                title="Record possession changing without awarding a player or line D"
-                onclick={() => changeEventType('opponent_turnover')}
-              >No player D — opponent turnover</button>
               {#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}
                 <button class:selected={firstPlayerId === player.id.toString()} type="button" aria-pressed={firstPlayerId === player.id.toString()} title={player.name} onclick={() => firstPlayerId = player.id.toString()}>{player.name}</button>
               {/each}
@@ -2172,7 +2167,7 @@
           {/if}
         {:else}
           <button type="button" onclick={() => chooseSpatialAction('defended')}>Defended</button>
-          <button type="button" disabled={saving} onclick={() => void saveSpatialOpponentTurnover()}>Opponent turnover (no D)</button>
+          <button type="button" disabled={saving} onclick={() => void saveSpatialOpponentTurnover()}>Opponent turnover</button>
           <button type="button" onclick={() => chooseSpatialAction('goal')}>Callahan</button>
         {/if}
       </div>
@@ -2185,14 +2180,6 @@
       <fieldset class="spatial-player-picker">
         <legend>{spatialRoleLabel(spatialAnnotations[spatialAnnotations.length - 1].role)}</legend>
         <div>
-          {#if eventType === 'defended'}
-            <button
-              type="button"
-              title="Record possession changing without awarding a player or line D"
-              disabled={saving}
-              onclick={() => void saveSpatialOpponentTurnover()}
-            >No player D — opponent turnover</button>
-          {/if}
           {#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}
             <button
               class:selected={spatialClickedPlayerId() === player.id.toString()}
