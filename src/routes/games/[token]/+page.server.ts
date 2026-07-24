@@ -14,9 +14,21 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
   const game = requireGameAccess(locals, params.token);
   const tracking = new GameTrackingRepository().getSnapshot(params.token);
   if (!tracking) error(404, 'Game not found.');
+  const requestedEventId = optionalNonNegativeInteger(url.searchParams.get('event'));
+  const requestedTimeMs = optionalNonNegativeInteger(url.searchParams.get('at'));
+  const requestedEvent = requestedEventId === null
+    ? null
+    : tracking.data.points
+      .flatMap((point) => point.events)
+      .concat(tracking.data.standaloneEvents)
+      .find((event) => event.id === requestedEventId) ?? null;
+  const initialVideoTimeSeconds = requestedEvent
+    ? Math.max(0, requestedEvent.timeMs - 3_000) / 1_000
+    : (requestedTimeMs ?? 0) / 1_000;
   return {
     role: locals.role,
     tracking,
+    initialVideoTimeSeconds,
     shareLinks: new ShareLinkRepository().listForGame(params.token),
     game: {
       token: game.token,
@@ -87,4 +99,10 @@ function requireAdmin(role: App.Locals['role'], token: string): void {
       `${resolve('/login')}?next=${encodeURIComponent(resolve(`/games/${token}`))}`,
     );
   }
+}
+
+function optionalNonNegativeInteger(value: string | null): number | null {
+  if (value === null || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }

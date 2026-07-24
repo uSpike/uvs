@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { calculateGameStatistics, mergeGameStatistics } from '$lib/game-stats';
+import { playerGameActions } from '$lib/player-game-actions';
 import { GameTrackingRepository } from '$lib/server/game-tracking';
 import { TournamentRepository } from '$lib/server/tournaments';
 import type { PageServerLoad } from './$types';
@@ -36,6 +37,7 @@ export const load: PageServerLoad = ({ params }) => {
   const games = seasonGames.map((game, index) => ({
     ...game.game,
     statistics: calculated[index].playerStatistics.find((stats) => stats.playerId === player.id)!,
+    actions: playerGameActions(game, player.id),
     ourScore: calculated[index].ourScore,
     opponentScore: calculated[index].opponentScore,
   }));

@@ -105,6 +105,7 @@
           metadata,
           videoName: data.game.title,
           metadataName: `${data.game.title} metadata`,
+          initialTime: data.initialVideoTimeSeconds,
         };
       })
       .catch((error: unknown) => {

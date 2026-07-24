@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowLeft, UserRound } from '@lucide/svelte';
+  import { ArrowLeft, ChevronDown, Play, UserRound } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
   import {
@@ -27,12 +27,17 @@
   let tournamentSortDirection = $state<TableSortDirection>('ascending');
   let gameSortKey = $state<GameSortKey | null>(null);
   let gameSortDirection = $state<TableSortDirection>('ascending');
+  let expandedGameTokens = $state<string[]>([]);
 
   const duration = (milliseconds: number): string => {
     const seconds = Math.round(milliseconds / 1000);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   };
   const pct = (won: number, played: number): string => played ? `${Math.round(won / played * 100)}%` : '—';
+  const actionTime = (milliseconds: number): string => {
+    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
+  };
 
   function toggleTournamentSort(key: TournamentSortKey, kind: 'text' | 'number'): void {
     if (tournamentSortKey === key) {
@@ -127,6 +132,22 @@
         : row.statistics.turnovers / row.statistics.touches;
     }
     return row.statistics[key];
+  }
+
+  function toggleGameActions(token: string): void {
+    expandedGameTokens = expandedGameTokens.includes(token)
+      ? expandedGameTokens.filter((candidate) => candidate !== token)
+      : [...expandedGameTokens, token];
+  }
+
+  function actionHref(
+    game: GameRow,
+    action: GameRow['actions'][number],
+  ): string {
+    const gameUrl = resolve(`/games/${game.token}`);
+    return action.eventId === null
+      ? `${gameUrl}?at=${action.timeMs}`
+      : `${gameUrl}?event=${action.eventId}`;
   }
 </script>
 
@@ -231,8 +252,89 @@
       {@render gameHeader('blocks', 'Blocks', statHelp.blocks, 'number')}
       {@render gameHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
       {@render gameHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
+      <th title="Video links for this player’s attributed actions">Clips</th>
     </tr></thead><tbody>
-      {#each sortedGames() as game}<tr><th><a href={resolve(`/games/${game.token}`)}>{game.title}</a><small>vs {game.opponentName}</small></th><td>{game.ourScore}–{game.opponentScore}</td><td>{duration(game.statistics.timePlayedMs)}</td><td>{game.statistics.pointsPlayed}</td><td>{game.statistics.completions}</td><td>{pct(game.statistics.completions,game.statistics.throwingAttempts)}</td><td>{game.statistics.receptions}</td><td>{pct(game.statistics.receptions,game.statistics.receivingTargets)}</td><td>{game.statistics.drops}</td><td>{game.statistics.touches}</td><td>{game.statistics.turnovers}</td><td>{pct(game.statistics.turnovers,game.statistics.touches)}</td><td>{game.statistics.goals}</td><td>{game.statistics.assists}</td><td>{game.statistics.hockeyAssists}</td><td>{game.statistics.blocks}</td><td>{game.statistics.plusMinus > 0 ? '+' : ''}{game.statistics.plusMinus}</td><td>{duration(game.statistics.timeWithDiscMs)}</td></tr>{/each}
+      {#each sortedGames() as game}
+        <tr class:actions-open={expandedGameTokens.includes(game.token)}>
+          <th><a href={resolve(`/games/${game.token}`)}>{game.title}</a><small>vs {game.opponentName}</small></th>
+          <td>{game.ourScore}–{game.opponentScore}</td>
+          <td>{duration(game.statistics.timePlayedMs)}</td>
+          <td>{game.statistics.pointsPlayed}</td>
+          <td>{game.statistics.completions}</td>
+          <td>{pct(game.statistics.completions,game.statistics.throwingAttempts)}</td>
+          <td>{game.statistics.receptions}</td>
+          <td>{pct(game.statistics.receptions,game.statistics.receivingTargets)}</td>
+          <td>{game.statistics.drops}</td>
+          <td>{game.statistics.touches}</td>
+          <td>{game.statistics.turnovers}</td>
+          <td>{pct(game.statistics.turnovers,game.statistics.touches)}</td>
+          <td>{game.statistics.goals}</td>
+          <td>{game.statistics.assists}</td>
+          <td>{game.statistics.hockeyAssists}</td>
+          <td>{game.statistics.blocks}</td>
+          <td>{game.statistics.plusMinus > 0 ? '+' : ''}{game.statistics.plusMinus}</td>
+          <td>{duration(game.statistics.timeWithDiscMs)}</td>
+          <td>
+            <button
+              class:open={expandedGameTokens.includes(game.token)}
+              class="clip-toggle"
+              type="button"
+              disabled={game.actions.length === 0}
+              aria-expanded={expandedGameTokens.includes(game.token)}
+              onclick={() => toggleGameActions(game.token)}
+            >
+              {game.actions.length === 0 ? 'None' : game.actions.length}
+              <ChevronDown size={12} aria-hidden="true" />
+            </button>
+          </td>
+        </tr>
+        {#if expandedGameTokens.includes(game.token)}
+          <tr class="action-reel-row">
+            <td colspan="19">
+              <div class="action-reel">
+                <section class="highlight-clips">
+                  <header>
+                    <h3>Highlights</h3>
+                    <span>{game.actions.filter((action) => action.tone === 'highlight').length}</span>
+                  </header>
+                  {#if game.actions.some((action) => action.tone === 'highlight')}
+                    <div class="clip-list">
+                      {#each game.actions.filter((action) => action.tone === 'highlight') as action}
+                        <a href={actionHref(game, action)} title={`Open video near ${actionTime(action.timeMs)}`}>
+                          <span class="clip-play"><Play size={11} fill="currentColor" aria-hidden="true" /></span>
+                          <span><strong>{action.label}</strong><small>{action.detail}</small></span>
+                          <time>{actionTime(action.timeMs)}</time>
+                        </a>
+                      {/each}
+                    </div>
+                  {:else}
+                    <p>No attributed highlights recorded.</p>
+                  {/if}
+                </section>
+                <section class="lowlight-clips">
+                  <header>
+                    <h3>Lowlights</h3>
+                    <span>{game.actions.filter((action) => action.tone === 'lowlight').length}</span>
+                  </header>
+                  {#if game.actions.some((action) => action.tone === 'lowlight')}
+                    <div class="clip-list">
+                      {#each game.actions.filter((action) => action.tone === 'lowlight') as action}
+                        <a href={actionHref(game, action)} title={`Open video near ${actionTime(action.timeMs)}`}>
+                          <span class="clip-play"><Play size={11} fill="currentColor" aria-hidden="true" /></span>
+                          <span><strong>{action.label}</strong><small>{action.detail}</small></span>
+                          <time>{actionTime(action.timeMs)}</time>
+                        </a>
+                      {/each}
+                    </div>
+                  {:else}
+                    <p>No attributed lowlights recorded.</p>
+                  {/if}
+                </section>
+              </div>
+            </td>
+          </tr>
+        {/if}
+      {/each}
     </tbody></table></div>
   </section>
 </div>
@@ -269,6 +371,35 @@
   tbody tr:hover > * { background:#f8faf7; }
   tbody th a { display:block; color:#087f9b; text-decoration:none; }
   tbody th small { display:block; margin-top:2px; color:#777f75; font-weight:400; }
+  .clip-toggle { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:45px; min-height:25px; padding:0 6px; border:1px solid #cad1c7; border-radius:4px; color:#4f5a4d; background:#f8faf7; font-size:9px; font-weight:750; cursor:pointer; }
+  .clip-toggle :global(svg) { transition:transform 120ms ease; }
+  .clip-toggle.open :global(svg) { transform:rotate(180deg); }
+  .clip-toggle:disabled { border-color:#e0e3de; color:#a4aba1; background:#fafbfa; cursor:default; }
+  tr.actions-open > * { border-bottom-color:#c7d1c4; background:#f6f9f5; }
+  .action-reel-row > td { height:auto; padding:0; border-bottom:1px solid #c7d1c4; background:#f0f4ee; text-align:left; white-space:normal; }
+  .action-reel-row:hover > td { background:#f0f4ee; }
+  .action-reel { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:10px; }
+  .action-reel section { min-width:0; overflow:hidden; border:1px solid #d4dad1; border-radius:5px; background:#fff; }
+  .action-reel section > header { display:flex; align-items:center; justify-content:space-between; min-height:35px; padding:6px 9px; border-bottom:1px solid #e0e4de; }
+  .action-reel h3 { margin:0; font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .action-reel header span { display:grid; place-items:center; min-width:20px; height:18px; border-radius:9px; font-size:8px; font-weight:800; }
+  .highlight-clips h3 { color:#2e6846; }
+  .highlight-clips header span { color:#2d6a44; background:#e5f3e8; }
+  .lowlight-clips h3 { color:#914247; }
+  .lowlight-clips header span { color:#914247; background:#f8e8e9; }
+  .action-reel section > p { margin:0; padding:14px 10px; color:#858d82; font-size:9px; }
+  .clip-list { display:grid; }
+  .clip-list a { display:grid; grid-template-columns:24px minmax(0,1fr) auto; align-items:center; gap:7px; min-height:43px; padding:5px 8px; border-bottom:1px solid #ecefeb; color:#30372f; text-decoration:none; }
+  .clip-list a:last-child { border-bottom:0; }
+  .clip-list a:hover { background:#f6f9f5; }
+  .clip-play { display:grid; place-items:center; width:23px; height:23px; border-radius:50%; color:#fff; background:#568068; }
+  .lowlight-clips .clip-play { background:#a85b60; }
+  .clip-list a > span:nth-child(2) { display:grid; gap:2px; min-width:0; }
+  .clip-list strong,.clip-list small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .clip-list strong { font-size:10px; }
+  .clip-list small { color:#7b8379; font-size:8px; }
+  .clip-list time { color:#687268; font:9px ui-monospace,monospace; }
   @media(max-width:900px){.totals-grid{grid-template-columns:repeat(3,1fr)}.totals-grid div{border-top:1px solid #e0e4de;border-left:1px solid #e0e4de}.totals-grid div:nth-child(3n+1){border-left:0}.totals-grid div:nth-child(-n+3){border-top:0}}
+  @media(max-width:680px){.action-reel{grid-template-columns:1fr}}
   @media(max-width:520px){.player-page{width:calc(100% - 18px)}}
 </style>
