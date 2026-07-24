@@ -11,10 +11,10 @@ export type TeamEndzone = 'left' | 'right';
 export const AUTO_CAMERA_ENDZONE_RETURN_DELAY_MS = 10_000;
 
 /** Supported explanations for a tracked-team turnover. */
-export type TurnoverReason = 'drop' | 'block' | 'throwaway' | 'unknown';
+export type TurnoverReason = 'drop' | 'block' | 'throwaway' | 'stall' | 'unknown';
 
 /** Supported explanations for an unforced opponent turnover. */
-export type OpponentTurnoverReason = 'drop' | 'throwaway' | 'unknown';
+export type OpponentTurnoverReason = 'drop' | 'throwaway' | 'stall' | 'unknown';
 
 /** Dead-disc interval categories. */
 export type StoppageKind = 'foul' | 'injury' | 'timeout' | 'other';

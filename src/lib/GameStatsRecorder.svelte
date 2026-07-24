@@ -1114,11 +1114,11 @@
       case 'turnover': return {
         throwerId: first,
         intendedReceiverId: second,
-        reason: turnoverReason as 'drop' | 'block' | 'throwaway' | 'unknown',
+        reason: turnoverReason as 'drop' | 'block' | 'throwaway' | 'stall' | 'unknown',
       };
       case 'defended': return { defenderId: first };
       case 'opponent_turnover': return {
-        reason: opponentTurnoverReason as 'drop' | 'throwaway' | 'unknown',
+        reason: opponentTurnoverReason as 'drop' | 'throwaway' | 'stall' | 'unknown',
       };
       case 'goal': return { throwerId: callahan ? null : first, receiverId: second, callahan };
       case 'conceded': return { callahan };
@@ -1859,7 +1859,7 @@
           </fieldset>
         {:else if eventType === 'turnover'}
           <div class="two-fields">
-            <label><span>Reason</span><select bind:value={turnoverReason}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="unknown">Unknown</option></select></label>
+            <label><span>Reason</span><select bind:value={turnoverReason}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="unknown">Unknown</option></select></label>
             <label><span>Thrower</span><select bind:value={firstPlayerId} required><option value="" disabled>Select thrower</option>{#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}<option value={player.id.toString()}>{player.name}</option>{/each}</select></label>
           </div>
           <fieldset class="quick-player-picker">
@@ -1881,7 +1881,7 @@
             </div>
           </fieldset>
         {:else if eventType === 'opponent_turnover'}
-          <label><span>Reason</span><select bind:value={opponentTurnoverReason}><option value="drop">Drop</option><option value="throwaway">Throwaway</option><option value="unknown">Unknown</option></select></label>
+          <label><span>Reason</span><select bind:value={opponentTurnoverReason}><option value="drop">Drop</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="unknown">Unknown</option></select></label>
         {:else if eventType === 'goal'}
           <label class="check-field"><input bind:checked={callahan} type="checkbox" onchange={() => { if (callahan) firstPlayerId = ''; }} />Callahan</label>
           {#if !callahan}<label><span>Thrower / assist</span><select bind:value={firstPlayerId} required><option value="" disabled>Select thrower</option>{#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}<option value={player.id.toString()}>{player.name}</option>{/each}</select></label>{/if}
@@ -2356,7 +2356,7 @@
       <p>The marker is manual. Drag it on the video if the position needs adjustment.</p>
     {:else if spatialDraftStage === 'details'}
       {#if eventType === 'turnover'}
-        <label class="spatial-field"><span>Reason</span><select bind:value={turnoverReason} disabled={saving}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="unknown">Unknown</option></select></label>
+        <label class="spatial-field"><span>Reason</span><select bind:value={turnoverReason} disabled={saving}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="unknown">Unknown</option></select></label>
       {/if}
 
       <fieldset class="spatial-player-picker">

@@ -35,11 +35,13 @@ const TURNOVER_REASONS = new Set<TurnoverReason>([
   'drop',
   'block',
   'throwaway',
+  'stall',
   'unknown',
 ]);
 const OPPONENT_TURNOVER_REASONS = new Set<OpponentTurnoverReason>([
   'drop',
   'throwaway',
+  'stall',
   'unknown',
 ]);
 const STOPPAGE_KINDS = new Set<StoppageKind>(['foul', 'injury', 'timeout', 'other']);
