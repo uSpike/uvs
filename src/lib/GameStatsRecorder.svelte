@@ -49,6 +49,8 @@
     onHighlightOverlayChange,
     onEditingChange,
     onSnapshotChange,
+    paperOnlyMode = false,
+    autoStartEditing = false,
   }: {
     token: string;
     initialSnapshot: GameTrackingSnapshot;
@@ -72,6 +74,8 @@
     } | null) => void;
     onEditingChange: (editing: boolean) => void;
     onSnapshotChange: (snapshot: GameTrackingSnapshot) => void;
+    paperOnlyMode?: boolean;
+    autoStartEditing?: boolean;
   } = $props();
 
   type PanelTab = 'record' | 'paper' | 'highlights';
@@ -114,7 +118,9 @@
   }
 
   let snapshot = $state.raw<GameTrackingSnapshot>((() => initialSnapshot)());
-  let activeTab = $state<PanelTab>((() => initialSnapshot.data.game.hasVideo ? 'record' : 'paper')());
+  let activeTab = $state<PanelTab>(
+    (() => paperOnlyMode || !initialSnapshot.data.game.hasVideo ? 'paper' : 'record')(),
+  );
   let editing = $state(false);
   let lockToken = $state('');
   let lockHeldElsewhere = $state(false);
@@ -235,6 +241,7 @@
     ownerId = crypto.randomUUID();
     window.addEventListener('keydown', handleShortcut);
     window.addEventListener('pagehide', releaseForPageClose);
+    if (autoStartEditing) void acquireLock(false);
     return () => {
       window.removeEventListener('keydown', handleShortcut);
       window.removeEventListener('pagehide', releaseForPageClose);
@@ -328,7 +335,7 @@
       lockToken = result.token;
       editing = true;
       onEditingChange(true);
-      activeTab = snapshot.data.game.hasVideo ? 'record' : 'paper';
+      activeTab = paperOnlyMode || !snapshot.data.game.hasVideo ? 'paper' : 'record';
       connectPresence(result.token);
       seekToLastRecordedPointTime();
       await refreshSnapshotForEditing();
@@ -1582,7 +1589,7 @@
   }
 
   function handleShortcut(event: KeyboardEvent): void {
-    if (!editing || event.repeat) return;
+    if (!editing || activeTab !== 'record' || event.repeat) return;
     const target = event.target as HTMLElement | null;
     if (target?.matches('input, select, textarea') || target?.isContentEditable) return;
     const key = event.key.toLowerCase();
@@ -1676,7 +1683,9 @@
   {/if}
 
   <nav class="panel-tabs" aria-label="Statistics views">
-    {#if editing}
+    {#if paperOnlyMode}
+      <button class:active={activeTab === 'paper'} type="button" disabled>Paper</button>
+    {:else if editing}
       {#if snapshot.data.game.hasVideo}
         <button class:active={activeTab === 'record'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'record'}>Record</button>
         <button class:active={activeTab === 'highlights'} type="button" disabled={draftMode !== null} onclick={() => activeTab = 'highlights'}>Highlights</button>
