@@ -36,6 +36,7 @@ const TURNOVER_REASONS = new Set<TurnoverReason>([
   'block',
   'throwaway',
   'stall',
+  'penalty',
   'unknown',
 ]);
 const OPPONENT_TURNOVER_REASONS = new Set<OpponentTurnoverReason>([

@@ -297,6 +297,8 @@ describe('game statistics', () => {
       goals: 1,
       blocks: 4,
       completions: 0,
+      extendedPlusMinus: 8,
+      gamesPlayed: 1,
     });
     expect(calculated.lineStatistics[0]).toMatchObject({
       pointsPlayed: 2,
@@ -389,10 +391,16 @@ describe('game statistics', () => {
     expect(byId.get(1)).toMatchObject({
       completions: 2,
       throwingAttempts: 2,
+      passerTurnovers: 0,
       receptions: 1,
       receivingTargets: 1,
       touches: 2,
       turnovers: 0,
+      oCompletions: 2,
+      oThrowingAttempts: 2,
+      oEfficiency: 1,
+      extendedPlusMinus: 1,
+      gamesPlayed: 1,
     });
     expect(byId.get(2)).toMatchObject({
       completions: 0,
@@ -402,6 +410,9 @@ describe('game statistics', () => {
       touches: 2,
       drops: 0,
       turnovers: 0,
+      oThrowingAttempts: 1,
+      oPasserTurnovers: 0,
+      extendedPlusMinus: 1,
     });
     expect(byId.get(3)).toMatchObject({
       completions: 1,
@@ -412,6 +423,9 @@ describe('game statistics', () => {
       touches: 0,
       turnovers: 1,
       blocks: 1,
+      oDrops: 1,
+      oBlocks: 1,
+      extendedPlusMinus: 0,
     });
     expect(calculated.teamStatistics).toEqual({
       pointsPlayed: 1,
@@ -468,9 +482,11 @@ describe('game statistics', () => {
     );
     expect(merged.teamStatistics.defensiveConversions).toBe(2);
     expect(merged.playerStatistics.find((stats) => stats.playerId === 1)).toMatchObject({
+      gamesPlayed: 2,
       completions: 4,
       throwingAttempts: 4,
       touches: 4,
+      extendedPlusMinus: 2,
     });
     expect(merged.connectionStatistics[0]).toMatchObject({
       throwerPlayerId: 1,
@@ -515,13 +531,25 @@ describe('game statistics', () => {
       goals: 1,
       blocks: 1,
       plusMinus: 1,
+      extendedPlusMinus: 2,
+      dEfficiency: 1,
+      dGoals: 1,
+      dBlocks: 1,
     });
-    expect(byId.get(2)).toMatchObject({ dPointsWon: 1, blocks: 1, plusMinus: 1 });
+    expect(byId.get(2)).toMatchObject({
+      dPointsWon: 1,
+      blocks: 1,
+      plusMinus: 1,
+      extendedPlusMinus: 1,
+      dEfficiency: 1,
+      dBlocks: 1,
+    });
     expect(byId.get(3)).toMatchObject({
       timePlayedMs: 3_000,
       dPointsPlayed: 1,
       dPointsWon: 1,
       plusMinus: 0,
+      dEfficiency: 0,
     });
     expect(byId.get(4)).toMatchObject({
       timePlayedMs: 3_000,
@@ -529,8 +557,57 @@ describe('game statistics', () => {
       dPointsWon: 1,
       turnovers: 1,
       plusMinus: 1,
+      extendedPlusMinus: -1,
+      dEfficiency: 1,
+      dDrops: 1,
     });
     expect(calculated.lineStatistics[0]).toMatchObject({ blocks: 2, goalsFor: 1 });
+  });
+
+  it('charges passer turnovers and being Callahaned in extended plus-minus', () => {
+    nextEventId = 30;
+    const offense = point({
+      events: [
+        event(1, 2_000, 'turnover', {
+          throwerId: 1,
+          intendedReceiverId: 2,
+          reason: 'stall',
+        }),
+        event(1, 4_000, 'conceded', { callahan: false }),
+      ],
+    });
+    const callahanAgainst = point({
+      id: 2,
+      sequenceNumber: 2,
+      startTimeMs: 5_000,
+      events: [event(2, 7_000, 'conceded', { callahan: true })],
+    });
+
+    const calculated = calculateGameStatistics(gameData([offense, callahanAgainst]));
+    const byId = new Map(calculated.playerStatistics.map((stats) => [stats.playerId, stats]));
+
+    expect(byId.get(1)).toMatchObject({
+      throwingAttempts: 1,
+      passerTurnovers: 1,
+      stalls: 1,
+      turnovers: 1,
+      oThrowingAttempts: 1,
+      oPasserTurnovers: 1,
+      oStalls: 1,
+      oTurnovers: 1,
+      extendedPlusMinus: -2,
+      oEfficiency: -2,
+    });
+    expect(byId.get(2)).toMatchObject({
+      receivingTargets: 1,
+      drops: 0,
+      extendedPlusMinus: -1,
+      oEfficiency: -2,
+    });
+    expect(byId.get(3)).toMatchObject({
+      extendedPlusMinus: -1,
+      oEfficiency: -2,
+    });
   });
 
   it('derives the live handler and flags incomplete attribution', () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
-  import { ArrowLeft, BarChart3, Copy, Download, Edit3, ExternalLink, FileJson, Link2, PanelRightClose, PanelRightOpen, Plus, Trash2, Unlock, Upload } from '@lucide/svelte';
+  import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, PanelRightClose, PanelRightOpen, Plus, Trash2, Unlock } from '@lucide/svelte';
   import type { MetadataTimeline } from '$lib/metadata';
   import {
     UVSVideoViewer,
@@ -36,12 +36,9 @@
   let statsPaneHidden = $state(false);
   let statsRecorder = $state<{
     toggleEditing: () => void;
-    importStatistics: (file: File) => Promise<{ ok: boolean; error?: string }>;
     placeSpatialPoint: (point: UVSViewerSpatialPoint) => void;
     adjustSpatialPoint: (index: number, point: UVSViewerSpatialPoint) => void;
   } | null>(null);
-  let statsTransferImporting = $state(false);
-  let statsTransferMessage = $state<{ error: boolean; text: string } | null>(null);
   let spatialPlacementActive = $state(false);
   let spatialMarkers = $state<UVSViewerSpatialMarker[]>([]);
   let highlightOverlay = $state<{
@@ -240,32 +237,6 @@
     statsPaneHidden = true;
   }
 
-  async function importStatisticsFile(event: Event): Promise<void> {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0] ?? null;
-    input.value = '';
-    if (!file) return;
-    if (!window.confirm(
-      `Import statistics from "${file.name}"?\n\nThis replaces every existing point, action, highlight, matchup override, and paper statistic for this game.`,
-    )) return;
-    if (!statsRecorder) {
-      statsTransferMessage = { error: true, text: 'The statistics editor is not ready.' };
-      return;
-    }
-    statsTransferImporting = true;
-    statsTransferMessage = null;
-    const result = await statsRecorder.importStatistics(file);
-    statsTransferImporting = false;
-    if (!result.ok) {
-      statsTransferMessage = {
-        error: true,
-        text: result.error ?? 'Statistics could not be imported.',
-      };
-      return;
-    }
-    statsPaneHidden = false;
-    statsTransferMessage = { error: false, text: 'Statistics imported.' };
-  }
 </script>
 
 <svelte:head>
@@ -335,49 +306,6 @@
   {/if}
 {/snippet}
 
-{#snippet statsTransferControl()}
-  {#if data.role === 'player' || data.role === 'admin'}
-    <details class="stats-transfer-control">
-      <summary class="secondary-command compact">
-        <FileJson size={15} aria-hidden="true" />
-        Data
-      </summary>
-      <div class="stats-transfer-popover">
-        <div>
-          <strong>Game statistics</strong>
-          <small>Back up or restore points, actions, highlights, and paper stats.</small>
-        </div>
-        <a
-          class="stats-transfer-action"
-          href={resolve(`/api/games/${data.game.token}/stats-transfer`)}
-          download
-        >
-          <Download size={15} aria-hidden="true" />
-          <span><b>Export stats</b><small>Download a portable UVS JSON file.</small></span>
-        </a>
-        <label class:disabled={statsTransferImporting} class="stats-transfer-action">
-          <Upload size={15} aria-hidden="true" />
-          <span>
-            <b>{statsTransferImporting ? 'Importing…' : 'Import stats'}</b>
-            <small>Replace this game’s stats from a UVS JSON file.</small>
-          </span>
-          <input
-            type="file"
-            accept=".json,application/json"
-            disabled={statsTransferImporting}
-            onchange={importStatisticsFile}
-          />
-        </label>
-        {#if statsTransferMessage}
-          <p class:error={statsTransferMessage.error} class="stats-transfer-message" role={statsTransferMessage.error ? 'alert' : 'status'}>
-            {statsTransferMessage.text}
-          </p>
-        {/if}
-      </div>
-    </details>
-  {/if}
-{/snippet}
-
 <section class:stats-hidden={statsPaneHidden && data.game.hasVideo} class="game-page">
   {#if statsPaneHidden && data.game.hasVideo}
     <header class="game-header minimized-game-header">
@@ -421,7 +349,6 @@
             title="View game and event statistics"
           ><BarChart3 size={14} aria-hidden="true" />Stats</a>
         {/if}
-        {@render statsTransferControl()}
         {@render shareControl()}
         <button
           class="icon-command stats-pane-toggle"
@@ -507,7 +434,6 @@
               {#if statsEditing}<Unlock size={14} aria-hidden="true" />Editing{:else}<Edit3 size={14} aria-hidden="true" />Edit stats{/if}
             </button>
           {/if}
-          {@render statsTransferControl()}
           {@render shareControl()}
 
           {#if data.role === 'admin' && data.game.hasVideo}
@@ -659,49 +585,6 @@
   .stats-page-command:hover { border-color:#626a60; color:#fff; background:#343932; }
   .stats-edit-command { border-color:#4b5148; color:#e0e5dd; background:#292d27; }
   .stats-edit-command.active { border-color:#278a54; color:#8de2aa; background:#203328; }
-  .stats-transfer-control { position: relative; }
-  .stats-transfer-control > summary { list-style: none; cursor: pointer; }
-  .stats-transfer-control > summary::-webkit-details-marker { display: none; }
-  .stats-transfer-control > summary { border-color:#4b5148; color:#e0e5dd; background:#292d27; }
-  .stats-transfer-popover {
-    position: absolute;
-    z-index: 31;
-    top: calc(100% + 9px);
-    right: 0;
-    display: grid;
-    gap: 9px;
-    width: min(330px, calc(100vw - 24px));
-    padding: 13px;
-    border: 1px solid #555b52;
-    border-radius: 6px;
-    color: #252b25;
-    background: #fff;
-    box-shadow: 0 14px 34px rgba(0,0,0,.34);
-  }
-  .stats-transfer-popover > div:first-child { display:grid; gap:3px; padding:0 2px 3px; }
-  .stats-transfer-popover strong { font-size:13px; }
-  .stats-transfer-popover small { color:#687066; font-size:10px; font-weight:500; }
-  .stats-transfer-action {
-    display:grid;
-    grid-template-columns:auto minmax(0,1fr);
-    align-items:center;
-    gap:9px;
-    min-height:46px;
-    padding:7px 9px;
-    border:1px solid #d6dbd3;
-    border-radius:5px;
-    color:#263026;
-    background:#f7f9f6;
-    text-decoration:none;
-    cursor:pointer;
-  }
-  .stats-transfer-action:hover { border-color:#9eaa9b; background:#eef2ec; }
-  .stats-transfer-action > span { display:grid; gap:2px; }
-  .stats-transfer-action b { font-size:11px; }
-  .stats-transfer-action input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none; }
-  .stats-transfer-action.disabled { cursor:wait; opacity:.55; }
-  .stats-transfer-message { margin:0; padding:6px 8px; border-radius:4px; color:#266239; background:#e8f5eb; font-size:10px; }
-  .stats-transfer-message.error { color:#9d2730; background:#fbeaec; }
   .share-control { position: relative; }
   .share-control > summary { list-style: none; cursor: pointer; }
   .share-control > summary::-webkit-details-marker { display: none; }

@@ -169,6 +169,7 @@ function turnoverLabel(payload: TurnoverPayload): string {
     case 'block': return 'Blocked throw';
     case 'throwaway': return 'Throwaway';
     case 'stall': return 'Stall';
+    case 'penalty': return 'Misc. penalty';
     case 'unknown': return 'Turnover';
   }
 }

@@ -98,7 +98,8 @@
     if (key === 'throwingPercentage') {
       return row.statistics.throwingAttempts === 0
         ? null
-        : row.statistics.completions / row.statistics.throwingAttempts;
+        : (row.statistics.throwingAttempts - row.statistics.passerTurnovers) /
+          row.statistics.throwingAttempts;
     }
     if (key === 'receivingPercentage') {
       return row.statistics.receivingTargets === 0
@@ -119,7 +120,8 @@
     if (key === 'throwingPercentage') {
       return row.statistics.throwingAttempts === 0
         ? null
-        : row.statistics.completions / row.statistics.throwingAttempts;
+        : (row.statistics.throwingAttempts - row.statistics.passerTurnovers) /
+          row.statistics.throwingAttempts;
     }
     if (key === 'receivingPercentage') {
       return row.statistics.receivingTargets === 0
@@ -193,7 +195,7 @@
     <div title={statHelp.hockeyAssists}><span>Hockey assists</span><strong>{data.total.hockeyAssists}</strong></div>
     <div title={statHelp.blocks}><span>Blocks</span><strong>{data.total.blocks}</strong></div>
     <div title={statHelp.turnovers}><span>Turnovers</span><strong>{data.total.turnovers}</strong></div>
-    <div title={statHelp.throwingPercentage}><span>Throwing</span><strong>{pct(data.total.completions, data.total.throwingAttempts)}</strong></div>
+    <div title={statHelp.passingPercentage}><span>Passing</span><strong>{pct(data.total.throwingAttempts - data.total.passerTurnovers, data.total.throwingAttempts)}</strong></div>
     <div title={statHelp.receivingPercentage}><span>Receiving</span><strong>{pct(data.total.receptions, data.total.receivingTargets)}</strong></div>
     <div title={statHelp.drops}><span>Drops</span><strong>{data.total.drops}</strong></div>
     <div title={statHelp.touches}><span>Touches</span><strong>{data.total.touches}</strong></div>
@@ -213,7 +215,7 @@
       {@render tournamentHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
       {@render tournamentHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
       {@render tournamentHeader('completions', 'C', statHelp.completions, 'number')}
-      {@render tournamentHeader('throwingPercentage', 'C%', statHelp.throwingPercentage, 'number')}
+      {@render tournamentHeader('throwingPercentage', 'Pass%', statHelp.passingPercentage, 'number')}
       {@render tournamentHeader('receptions', 'R', statHelp.receptions, 'number')}
       {@render tournamentHeader('receivingPercentage', 'R%', statHelp.receivingPercentage, 'number')}
       {@render tournamentHeader('drops', 'Drp', statHelp.drops, 'number')}
@@ -227,7 +229,7 @@
       {@render tournamentHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
       {@render tournamentHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
     </tr></thead><tbody>
-      {#each sortedTournaments() as tournament}<tr><th><a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>{tournament.name}</a></th><td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{pct(tournament.statistics.completions,tournament.statistics.throwingAttempts)}</td><td>{tournament.statistics.receptions}</td><td>{pct(tournament.statistics.receptions,tournament.statistics.receivingTargets)}</td><td>{tournament.statistics.drops}</td><td>{tournament.statistics.touches}</td><td>{tournament.statistics.turnovers}</td><td>{pct(tournament.statistics.turnovers,tournament.statistics.touches)}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td></tr>{/each}
+      {#each sortedTournaments() as tournament}<tr><th><a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>{tournament.name}</a></th><td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{pct(tournament.statistics.throwingAttempts - tournament.statistics.passerTurnovers,tournament.statistics.throwingAttempts)}</td><td>{tournament.statistics.receptions}</td><td>{pct(tournament.statistics.receptions,tournament.statistics.receivingTargets)}</td><td>{tournament.statistics.drops}</td><td>{tournament.statistics.touches}</td><td>{tournament.statistics.turnovers}</td><td>{pct(tournament.statistics.turnovers,tournament.statistics.touches)}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td></tr>{/each}
     </tbody></table></div>
   </section>
 
@@ -239,7 +241,7 @@
       {@render gameHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
       {@render gameHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
       {@render gameHeader('completions', 'C', statHelp.completions, 'number')}
-      {@render gameHeader('throwingPercentage', 'C%', statHelp.throwingPercentage, 'number')}
+      {@render gameHeader('throwingPercentage', 'Pass%', statHelp.passingPercentage, 'number')}
       {@render gameHeader('receptions', 'R', statHelp.receptions, 'number')}
       {@render gameHeader('receivingPercentage', 'R%', statHelp.receivingPercentage, 'number')}
       {@render gameHeader('drops', 'Drp', statHelp.drops, 'number')}
@@ -261,7 +263,7 @@
           <td>{duration(game.statistics.timePlayedMs)}</td>
           <td>{game.statistics.pointsPlayed}</td>
           <td>{game.statistics.completions}</td>
-          <td>{pct(game.statistics.completions,game.statistics.throwingAttempts)}</td>
+          <td>{pct(game.statistics.throwingAttempts - game.statistics.passerTurnovers,game.statistics.throwingAttempts)}</td>
           <td>{game.statistics.receptions}</td>
           <td>{pct(game.statistics.receptions,game.statistics.receivingTargets)}</td>
           <td>{game.statistics.drops}</td>

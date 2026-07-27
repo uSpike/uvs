@@ -24,7 +24,6 @@
   import type { GameRecordingMode } from './game-settings';
   import type { UVSViewerSpatialMarker, UVSViewerSpatialPoint } from './viewer-types';
   import { gameEventLabel } from './game-events';
-  import { MAX_GAME_STATISTICS_EXPORT_BYTES } from './game-stat-transfer';
   import type { MatchupRole } from './matchup';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
 
@@ -254,64 +253,6 @@
   export function toggleEditing(): void {
     if (editing) releaseLock();
     else void acquireLock(false);
-  }
-
-  /** Replace this game's statistics from a validated UVS JSON export. */
-  export async function importStatistics(
-    file: File,
-  ): Promise<{ ok: boolean; error?: string }> {
-    mutationError = '';
-    if (file.size > MAX_GAME_STATISTICS_EXPORT_BYTES) {
-      mutationError = 'Statistics file is larger than 25 MB.';
-      return { ok: false, error: mutationError };
-    }
-    if (draftMode !== null) {
-      mutationError = 'Finish or cancel the current edit before importing statistics.';
-      return { ok: false, error: mutationError };
-    }
-    if (!editing && !await acquireLock(false)) {
-      const error = lockHeldElsewhere
-        ? 'Another player is editing this game.'
-        : lockError || 'The editing lock could not be acquired.';
-      return { ok: false, error };
-    }
-    if (!lockToken) return { ok: false, error: 'The editing lock could not be acquired.' };
-
-    saving = true;
-    redoEvent = null;
-    try {
-      const response = await fetch(resolve(`/api/games/${token}/stats-transfer`), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-uvs-edit-token': lockToken,
-        },
-        body: file,
-      });
-      const result = await response.json() as GameTrackingSnapshot | { error?: string };
-      if (!response.ok) {
-        const error = 'error' in result
-          ? result.error ?? 'Statistics could not be imported.'
-          : 'Statistics could not be imported.';
-        if (response.status === 409) loseLock(error);
-        else mutationError = error;
-        return { ok: false, error };
-      }
-      snapshot = result as GameTrackingSnapshot;
-      onSnapshotChange(snapshot);
-      resetManualDrafts(snapshot);
-      draftMode = null;
-      clearSpatialDraft();
-      seekToLastRecordedPointTime();
-      return { ok: true };
-    } catch (caught) {
-      mutationError = caught instanceof Error
-        ? caught.message
-        : 'Statistics could not be imported.';
-      return { ok: false, error: mutationError };
-    } finally {
-      saving = false;
-    }
   }
 
   async function acquireLock(takeover = false): Promise<boolean> {
@@ -1114,7 +1055,7 @@
       case 'turnover': return {
         throwerId: first,
         intendedReceiverId: second,
-        reason: turnoverReason as 'drop' | 'block' | 'throwaway' | 'stall' | 'unknown',
+        reason: turnoverReason as 'drop' | 'block' | 'throwaway' | 'stall' | 'penalty' | 'unknown',
       };
       case 'defended': return { defenderId: first };
       case 'opponent_turnover': return {
@@ -1859,7 +1800,7 @@
           </fieldset>
         {:else if eventType === 'turnover'}
           <div class="two-fields">
-            <label><span>Reason</span><select bind:value={turnoverReason}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="unknown">Unknown</option></select></label>
+            <label><span>Reason</span><select bind:value={turnoverReason}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="penalty">Misc. penalty</option><option value="unknown">Unknown</option></select></label>
             <label><span>Thrower</span><select bind:value={firstPlayerId} required><option value="" disabled>Select thrower</option>{#each snapshot.data.players.filter((player) => formActivePlayerIds().includes(player.id)) as player}<option value={player.id.toString()}>{player.name}</option>{/each}</select></label>
           </div>
           <fieldset class="quick-player-picker">
@@ -2356,7 +2297,7 @@
       <p>The marker is manual. Drag it on the video if the position needs adjustment.</p>
     {:else if spatialDraftStage === 'details'}
       {#if eventType === 'turnover'}
-        <label class="spatial-field"><span>Reason</span><select bind:value={turnoverReason} disabled={saving}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="unknown">Unknown</option></select></label>
+        <label class="spatial-field"><span>Reason</span><select bind:value={turnoverReason} disabled={saving}><option value="drop">Drop</option><option value="block">Block</option><option value="throwaway">Throwaway</option><option value="stall">Stall</option><option value="penalty">Misc. penalty</option><option value="unknown">Unknown</option></select></label>
       {/if}
 
       <fieldset class="spatial-player-picker">

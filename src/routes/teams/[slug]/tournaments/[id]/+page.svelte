@@ -3,6 +3,7 @@
   import { invalidateAll } from '$app/navigation';
   import { resolve } from '$app/paths';
   import GamePaperStatsDialog from '$lib/GamePaperStatsDialog.svelte';
+  import GameStatsTransferControl from '$lib/GameStatsTransferControl.svelte';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
   import {
     compareTableSortValues,
@@ -15,12 +16,15 @@
   type PlayerStatistics = typeof data.statistics.playerStatistics[number];
   type LineStatistics = typeof data.statistics.lineStatistics[number];
   type ConnectionStatistics = typeof data.statistics.connectionStatistics[number];
+  type StatisticsTab = 'summary' | 'offense' | 'defense' | 'playing-time' | 'averages';
   type PlayerSortKey =
-    | 'playerName' | 'timePlayedMs' | 'pointsPlayed'
-    | 'oPointsPlayed' | 'oWinPercentage' | 'dPointsPlayed' | 'dWinPercentage'
-    | 'completions' | 'throwingPercentage' | 'receptions' | 'receivingPercentage'
-    | 'drops' | 'touches' | 'turnovers' | 'turnoversPerTouch' | 'goals' | 'assists'
-    | 'hockeyAssists' | 'blocks' | 'pulls' | 'plusMinus' | 'timeWithDiscMs';
+    | keyof PlayerStatistics
+    | 'oWinPercentage' | 'dWinPercentage'
+    | 'passingPercentage' | 'oPassingPercentage' | 'dPassingPercentage'
+    | 'receivingPercentage' | 'turnoversPerTouch'
+    | 'timePerPointMs' | 'discPerPointMs' | 'minutesPerGame' | 'pointsPerGame'
+    | 'goalsPerTen' | 'assistsPerTen' | 'hockeyAssistsPerTen' | 'blocksPerTen'
+    | 'turnoversPerTen' | 'completionsPerTen' | 'touchesPerTen';
   type LineSortKey =
     | 'lineName' | 'timePlayedMs' | 'pointsPlayed'
     | 'oPointsPlayed' | 'oWinPercentage' | 'dPointsPlayed' | 'dWinPercentage'
@@ -30,6 +34,7 @@
     | 'throwerName' | 'receiverName' | 'attempts' | 'completions'
     | 'completionPercentage' | 'goals' | 'turnovers';
 
+  let statisticsTab = $state<StatisticsTab>('summary');
   let playerSortKey = $state<PlayerSortKey | null>(null);
   let playerSortDirection = $state<TableSortDirection>('ascending');
   let lineSortKey = $state<LineSortKey | null>(null);
@@ -43,6 +48,20 @@
   };
   const pct = (won: number, played: number): string =>
     played === 0 ? '—' : `${Math.round((won / played) * 100)}%`;
+  const passingPct = (attempts: number, passerTurnovers: number): string =>
+    pct(attempts - passerTurnovers, attempts);
+  const signed = (value: number): string => `${value > 0 ? '+' : ''}${value}`;
+  const average = (value: number, count: number): string =>
+    count === 0 ? '—' : (value / count).toFixed(1);
+  const perTen = (value: number, pointsPlayed: number): string =>
+    pointsPlayed === 0 ? '—' : ((value / pointsPlayed) * 10).toFixed(1);
+  const averageDuration = (milliseconds: number, count: number): string =>
+    count === 0 ? '—' : duration(milliseconds / count);
+
+  function selectStatisticsTab(tab: StatisticsTab): void {
+    statisticsTab = tab;
+    playerSortKey = null;
+  }
 
   function togglePlayerSort(key: PlayerSortKey, kind: 'text' | 'number'): void {
     if (playerSortKey === key) {
@@ -84,6 +103,12 @@
     );
   }
 
+  function visiblePlayerStatistics(
+    statistics: typeof data.statistics,
+  ): PlayerStatistics[] {
+    return statistics.playerStatistics.filter((stats) => stats.gamesPlayed > 0);
+  }
+
   function sortedLineStatistics(rows: LineStatistics[]): LineStatistics[] {
     if (lineSortKey === null) return rows;
     const key = lineSortKey;
@@ -117,8 +142,20 @@
     if (key === 'dWinPercentage') {
       return stats.dPointsPlayed === 0 ? null : stats.dPointsWon / stats.dPointsPlayed;
     }
-    if (key === 'throwingPercentage') {
-      return stats.throwingAttempts === 0 ? null : stats.completions / stats.throwingAttempts;
+    if (key === 'passingPercentage') {
+      return stats.throwingAttempts === 0
+        ? null
+        : (stats.throwingAttempts - stats.passerTurnovers) / stats.throwingAttempts;
+    }
+    if (key === 'oPassingPercentage') {
+      return stats.oThrowingAttempts === 0
+        ? null
+        : (stats.oThrowingAttempts - stats.oPasserTurnovers) / stats.oThrowingAttempts;
+    }
+    if (key === 'dPassingPercentage') {
+      return stats.dThrowingAttempts === 0
+        ? null
+        : (stats.dThrowingAttempts - stats.dPasserTurnovers) / stats.dThrowingAttempts;
     }
     if (key === 'receivingPercentage') {
       return stats.receivingTargets === 0 ? null : stats.receptions / stats.receivingTargets;
@@ -126,7 +163,33 @@
     if (key === 'turnoversPerTouch') {
       return stats.touches === 0 ? null : stats.turnovers / stats.touches;
     }
-    return stats[key];
+    if (key === 'timePerPointMs') {
+      return stats.pointsPlayed === 0 ? null : stats.timePlayedMs / stats.pointsPlayed;
+    }
+    if (key === 'discPerPointMs') {
+      return stats.pointsPlayed === 0 ? null : stats.timeWithDiscMs / stats.pointsPlayed;
+    }
+    if (key === 'minutesPerGame') {
+      return stats.gamesPlayed === 0 ? null : stats.timePlayedMs / stats.gamesPlayed;
+    }
+    if (key === 'pointsPerGame') {
+      return stats.gamesPlayed === 0 ? null : stats.pointsPlayed / stats.gamesPlayed;
+    }
+    const perTenField = {
+      goalsPerTen: 'goals',
+      assistsPerTen: 'assists',
+      hockeyAssistsPerTen: 'hockeyAssists',
+      blocksPerTen: 'blocks',
+      turnoversPerTen: 'turnovers',
+      completionsPerTen: 'completions',
+      touchesPerTen: 'touches',
+    } as const;
+    if (key in perTenField) {
+      return stats.pointsPlayed === 0
+        ? null
+        : (stats[perTenField[key as keyof typeof perTenField]] / stats.pointsPlayed) * 10;
+    }
+    return stats[key as keyof PlayerStatistics];
   }
 
   function lineSortValue(stats: LineStatistics, key: LineSortKey): TableSortValue {
@@ -192,106 +255,178 @@
 {/snippet}
 
 {#snippet statisticsSections(statistics: typeof data.statistics)}
-  <section class="stats-section">
-    <header><h2>Team efficiency</h2><span>Point and possession outcomes</span></header>
-    <div class="team-summary">
-      <div title={statHelp.holdRate}><span>Hold rate</span><strong>{pct(statistics.teamStatistics.oPointsWon, statistics.teamStatistics.oPointsPlayed)}</strong><small>{statistics.teamStatistics.oPointsWon}/{statistics.teamStatistics.oPointsPlayed} O points</small></div>
-      <div title={statHelp.cleanHolds}><span>Clean holds</span><strong>{statistics.teamStatistics.cleanHolds}</strong><small>No turnovers</small></div>
-      <div title={statHelp.breakRate}><span>Break rate</span><strong>{pct(statistics.teamStatistics.dPointsWon, statistics.teamStatistics.dPointsPlayed)}</strong><small>{statistics.teamStatistics.dPointsWon}/{statistics.teamStatistics.dPointsPlayed} D points</small></div>
-      <div title={statHelp.defensiveConversion}><span>D conversion</span><strong>{pct(statistics.teamStatistics.defensiveConversions, statistics.teamStatistics.defensiveConversionOpportunities)}</strong><small>{statistics.teamStatistics.defensiveConversions}/{statistics.teamStatistics.defensiveConversionOpportunities} possessions</small></div>
-    </div>
-  </section>
+  {#if statisticsTab === 'summary'}
+    <section class="stats-section">
+      <header><h2>Team efficiency</h2><span>Point and possession outcomes</span></header>
+      <div class="team-summary">
+        <div title={statHelp.holdRate}><span>Hold rate</span><strong>{pct(statistics.teamStatistics.oPointsWon, statistics.teamStatistics.oPointsPlayed)}</strong><small>{statistics.teamStatistics.oPointsWon}/{statistics.teamStatistics.oPointsPlayed} O points</small></div>
+        <div title={statHelp.cleanHolds}><span>Clean holds</span><strong>{statistics.teamStatistics.cleanHolds}</strong><small>No turnovers</small></div>
+        <div title={statHelp.breakRate}><span>Break rate</span><strong>{pct(statistics.teamStatistics.dPointsWon, statistics.teamStatistics.dPointsPlayed)}</strong><small>{statistics.teamStatistics.dPointsWon}/{statistics.teamStatistics.dPointsPlayed} D points</small></div>
+        <div title={statHelp.defensiveConversion}><span>D conversion</span><strong>{pct(statistics.teamStatistics.defensiveConversions, statistics.teamStatistics.defensiveConversionOpportunities)}</strong><small>{statistics.teamStatistics.defensiveConversions}/{statistics.teamStatistics.defensiveConversionOpportunities} possessions</small></div>
+      </div>
+    </section>
+
+    <section class="stats-section">
+      <header><h2 title={statHelp.matchupPoints}>Preferred matchup points</h2><span>{statistics.matchupStatistics.unclassifiedPoints} unclassified</span></header>
+      <div class="matchup-summary">
+        {#each [statistics.matchupStatistics.mmp, statistics.matchupStatistics.fmp] as stats}
+          <div class:mmp={stats.matchup === 'mmp'} class:fmp={stats.matchup === 'fmp'}>
+            <strong>{stats.matchup.toUpperCase()}</strong>
+            <span>{stats.pointsWon}/{stats.pointsPlayed} won · {pct(stats.pointsWon, stats.pointsPlayed)}</span>
+            <small title={`${statHelp.offenseWinPercentage} ${statHelp.defenseWinPercentage}`}>Offense {stats.oPointsWon}/{stats.oPointsPlayed} · Defense {stats.dPointsWon}/{stats.dPointsPlayed}</small>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <section class="stats-section">
-    <header><h2 title={statHelp.matchupPoints}>Preferred matchup points</h2><span>{statistics.matchupStatistics.unclassifiedPoints} unclassified</span></header>
-    <div class="matchup-summary">
-      {#each [statistics.matchupStatistics.mmp, statistics.matchupStatistics.fmp] as stats}
-        <div class:mmp={stats.matchup === 'mmp'} class:fmp={stats.matchup === 'fmp'}>
-          <strong>{stats.matchup.toUpperCase()}</strong>
-          <span>{stats.pointsWon}/{stats.pointsPlayed} won · {pct(stats.pointsWon, stats.pointsPlayed)}</span>
-          <small title={`${statHelp.offenseWinPercentage} ${statHelp.defenseWinPercentage}`}>Offense {stats.oPointsWon}/{stats.oPointsPlayed} · Defense {stats.dPointsWon}/{stats.dPointsPlayed}</small>
-        </div>
-      {/each}
-    </div>
-  </section>
-
-  <section class="stats-section">
-    <header><h2>Players</h2><span>Scoring pass counts as a completion and reception</span></header>
+    <header>
+      <h2>{statisticsTab === 'summary' ? 'Player summary' : statisticsTab === 'offense' ? 'Offense' : statisticsTab === 'defense' ? 'Defense' : statisticsTab === 'playing-time' ? 'Playing time' : 'Per-game and per-10-point averages'}</h2>
+      <span>{statisticsTab === 'summary' ? 'Scoring passes count as completions' : statisticsTab === 'offense' ? 'Points that began with our team receiving' : statisticsTab === 'defense' ? 'Points that began with our team pulling' : statisticsTab === 'playing-time' ? 'Participation and disc time' : 'Rate stats normalize different amounts of playing time'}</span>
+    </header>
     <div class="table-scroll"><table><thead><tr>
       {@render playerHeader('playerName', 'Player', 'Player name', 'text')}
-      {@render playerHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
-      {@render playerHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
-      {@render playerHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
-      {@render playerHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
-      {@render playerHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
-      {@render playerHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
-      {@render playerHeader('completions', 'C', statHelp.completions, 'number')}
-      {@render playerHeader('throwingPercentage', 'C%', statHelp.throwingPercentage, 'number')}
-      {@render playerHeader('receptions', 'R', statHelp.receptions, 'number')}
-      {@render playerHeader('receivingPercentage', 'R%', statHelp.receivingPercentage, 'number')}
-      {@render playerHeader('drops', 'Drp', statHelp.drops, 'number')}
-      {@render playerHeader('touches', 'Touch', statHelp.touches, 'number')}
-      {@render playerHeader('turnovers', 'T', statHelp.turnovers, 'number')}
-      {@render playerHeader('turnoversPerTouch', 'T/Touch', statHelp.turnoversPerTouch, 'number')}
-      {@render playerHeader('goals', 'G', statHelp.goals, 'number')}
-      {@render playerHeader('assists', 'A', statHelp.assists, 'number')}
-      {@render playerHeader('hockeyAssists', '2A', statHelp.hockeyAssists, 'number')}
-      {@render playerHeader('blocks', 'Blocks', statHelp.blocks, 'number')}
-      {@render playerHeader('pulls', 'Pulls', statHelp.pulls, 'number')}
-      {@render playerHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
-      {@render playerHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
+      {#if statisticsTab === 'summary'}
+        {@render playerHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
+        {@render playerHeader('plusMinus', '+/−', statHelp.plusMinus, 'number')}
+        {@render playerHeader('extendedPlusMinus', 'Ext +/−', statHelp.extendedPlusMinus, 'number')}
+        {@render playerHeader('passingPercentage', 'Pass%', statHelp.passingPercentage, 'number')}
+        {@render playerHeader('goals', 'G', statHelp.goals, 'number')}
+        {@render playerHeader('assists', 'A', statHelp.assists, 'number')}
+        {@render playerHeader('hockeyAssists', '2A', statHelp.hockeyAssists, 'number')}
+        {@render playerHeader('blocks', 'Ds', statHelp.blocks, 'number')}
+        {@render playerHeader('completions', 'C', statHelp.completions, 'number')}
+        {@render playerHeader('drops', 'Drp', statHelp.drops, 'number')}
+        {@render playerHeader('passerTurnovers', 'Pass TO', statHelp.passerTurnovers, 'number')}
+        {@render playerHeader('turnovers', 'TO', statHelp.turnovers, 'number')}
+        {@render playerHeader('touches', 'Touch', statHelp.touches, 'number')}
+      {:else if statisticsTab === 'offense'}
+        {@render playerHeader('oPointsPlayed', 'O Pts', statHelp.offensePointsPlayed, 'number')}
+        {@render playerHeader('oEfficiency', 'O Eff', statHelp.offenseEfficiency, 'number')}
+        {@render playerHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
+        {@render playerHeader('oGoals', 'G', statHelp.goals, 'number')}
+        {@render playerHeader('oAssists', 'A', statHelp.assists, 'number')}
+        {@render playerHeader('oHockeyAssists', '2A', statHelp.hockeyAssists, 'number')}
+        {@render playerHeader('oCompletions', 'C', statHelp.completions, 'number')}
+        {@render playerHeader('oPassingPercentage', 'Pass%', statHelp.passingPercentage, 'number')}
+        {@render playerHeader('oThrowaways', 'Thrw', statHelp.throwaways, 'number')}
+        {@render playerHeader('oStalls', 'Stall', statHelp.stalls, 'number')}
+        {@render playerHeader('oDrops', 'Drp', statHelp.drops, 'number')}
+        {@render playerHeader('oPasserTurnovers', 'Pass TO', statHelp.passerTurnovers, 'number')}
+        {@render playerHeader('oTurnovers', 'TO', statHelp.turnovers, 'number')}
+        {@render playerHeader('oBlocks', 'Ds', statHelp.blocks, 'number')}
+        {@render playerHeader('oTouches', 'Touch', statHelp.touches, 'number')}
+      {:else if statisticsTab === 'defense'}
+        {@render playerHeader('dPointsPlayed', 'D Pts', statHelp.defensePointsPlayed, 'number')}
+        {@render playerHeader('dEfficiency', 'D Eff', statHelp.defenseEfficiency, 'number')}
+        {@render playerHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
+        {@render playerHeader('dPointsWon', 'Breaks', statHelp.breaks, 'number')}
+        {@render playerHeader('dGoals', 'G', statHelp.goals, 'number')}
+        {@render playerHeader('dAssists', 'A', statHelp.assists, 'number')}
+        {@render playerHeader('dHockeyAssists', '2A', statHelp.hockeyAssists, 'number')}
+        {@render playerHeader('dCompletions', 'C', statHelp.completions, 'number')}
+        {@render playerHeader('dPassingPercentage', 'Pass%', statHelp.passingPercentage, 'number')}
+        {@render playerHeader('dThrowaways', 'Thrw', statHelp.throwaways, 'number')}
+        {@render playerHeader('dStalls', 'Stall', statHelp.stalls, 'number')}
+        {@render playerHeader('dDrops', 'Drp', statHelp.drops, 'number')}
+        {@render playerHeader('dPasserTurnovers', 'Pass TO', statHelp.passerTurnovers, 'number')}
+        {@render playerHeader('dTurnovers', 'TO', statHelp.turnovers, 'number')}
+        {@render playerHeader('dBlocks', 'Ds', statHelp.blocks, 'number')}
+        {@render playerHeader('dTouches', 'Touch', statHelp.touches, 'number')}
+      {:else if statisticsTab === 'playing-time'}
+        {@render playerHeader('gamesPlayed', 'Games', statHelp.gamesPlayed, 'number')}
+        {@render playerHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
+        {@render playerHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
+        {@render playerHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
+        {@render playerHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
+        {@render playerHeader('timePerPointMs', 'Time/Pt', statHelp.timePerPoint, 'number')}
+        {@render playerHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
+        {@render playerHeader('discPerPointMs', 'Disc/Pt', statHelp.discPerPoint, 'number')}
+        {@render playerHeader('touches', 'Touch', statHelp.touches, 'number')}
+        {@render playerHeader('pulls', 'Pulls', statHelp.pulls, 'number')}
+      {:else}
+        {@render playerHeader('gamesPlayed', 'Games', statHelp.gamesPlayed, 'number')}
+        {@render playerHeader('minutesPerGame', 'Time/G', statHelp.perGame, 'number')}
+        {@render playerHeader('pointsPerGame', 'Pts/G', statHelp.perGame, 'number')}
+        {@render playerHeader('goalsPerTen', 'G/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('assistsPerTen', 'A/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('hockeyAssistsPerTen', '2A/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('blocksPerTen', 'Ds/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('turnoversPerTen', 'TO/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('completionsPerTen', 'C/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('touchesPerTen', 'Touch/10', statHelp.perTenPoints, 'number')}
+        {@render playerHeader('discPerPointMs', 'Disc/Pt', statHelp.discPerPoint, 'number')}
+      {/if}
     </tr></thead><tbody>
-      {#each sortedPlayerStatistics(statistics.playerStatistics) as stats}
-        <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`)}>{stats.playerName}</a></th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.completions}</td><td>{pct(stats.completions, stats.throwingAttempts)}</td><td>{stats.receptions}</td><td>{pct(stats.receptions, stats.receivingTargets)}</td><td>{stats.drops}</td><td>{stats.touches}</td><td>{stats.turnovers}</td><td>{pct(stats.turnovers, stats.touches)}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.pulls}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td><td>{duration(stats.timeWithDiscMs)}</td></tr>
+      {#each sortedPlayerStatistics(visiblePlayerStatistics(statistics)) as stats}
+        <tr>
+          <th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.playerId}`)}>{stats.playerName}</a></th>
+          {#if statisticsTab === 'summary'}
+            <td>{stats.pointsPlayed}</td><td>{signed(stats.plusMinus)}</td><td>{signed(stats.extendedPlusMinus)}</td><td>{passingPct(stats.throwingAttempts, stats.passerTurnovers)}</td><td>{stats.goals}</td><td>{stats.assists}</td><td>{stats.hockeyAssists}</td><td>{stats.blocks}</td><td>{stats.completions}</td><td>{stats.drops}</td><td>{stats.passerTurnovers}</td><td>{stats.turnovers}</td><td>{stats.touches}</td>
+          {:else if statisticsTab === 'offense'}
+            <td>{stats.oPointsPlayed}</td><td>{signed(stats.oEfficiency)}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.oGoals}</td><td>{stats.oAssists}</td><td>{stats.oHockeyAssists}</td><td>{stats.oCompletions}</td><td>{passingPct(stats.oThrowingAttempts, stats.oPasserTurnovers)}</td><td>{stats.oThrowaways}</td><td>{stats.oStalls}</td><td>{stats.oDrops}</td><td>{stats.oPasserTurnovers}</td><td>{stats.oTurnovers}</td><td>{stats.oBlocks}</td><td>{stats.oTouches}</td>
+          {:else if statisticsTab === 'defense'}
+            <td>{stats.dPointsPlayed}</td><td>{signed(stats.dEfficiency)}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.dPointsWon}</td><td>{stats.dGoals}</td><td>{stats.dAssists}</td><td>{stats.dHockeyAssists}</td><td>{stats.dCompletions}</td><td>{passingPct(stats.dThrowingAttempts, stats.dPasserTurnovers)}</td><td>{stats.dThrowaways}</td><td>{stats.dStalls}</td><td>{stats.dDrops}</td><td>{stats.dPasserTurnovers}</td><td>{stats.dTurnovers}</td><td>{stats.dBlocks}</td><td>{stats.dTouches}</td>
+          {:else if statisticsTab === 'playing-time'}
+            <td>{stats.gamesPlayed}</td><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{stats.dPointsPlayed}</td><td>{averageDuration(stats.timePlayedMs, stats.pointsPlayed)}</td><td>{duration(stats.timeWithDiscMs)}</td><td>{averageDuration(stats.timeWithDiscMs, stats.pointsPlayed)}</td><td>{stats.touches}</td><td>{stats.pulls}</td>
+          {:else}
+            <td>{stats.gamesPlayed}</td><td>{averageDuration(stats.timePlayedMs, stats.gamesPlayed)}</td><td>{average(stats.pointsPlayed, stats.gamesPlayed)}</td><td>{perTen(stats.goals, stats.pointsPlayed)}</td><td>{perTen(stats.assists, stats.pointsPlayed)}</td><td>{perTen(stats.hockeyAssists, stats.pointsPlayed)}</td><td>{perTen(stats.blocks, stats.pointsPlayed)}</td><td>{perTen(stats.turnovers, stats.pointsPlayed)}</td><td>{perTen(stats.completions, stats.pointsPlayed)}</td><td>{perTen(stats.touches, stats.pointsPlayed)}</td><td>{averageDuration(stats.timeWithDiscMs, stats.pointsPlayed)}</td>
+          {/if}
+        </tr>
+      {:else}
+        <tr class="empty-table-row"><td colspan={statisticsTab === 'summary' ? 14 : statisticsTab === 'offense' ? 16 : statisticsTab === 'defense' ? 17 : statisticsTab === 'playing-time' ? 11 : 12}>No player statistics recorded for this table.</td></tr>
       {/each}
     </tbody></table></div>
   </section>
 
-  <section class="stats-section">
-    <header><h2>Lines</h2><span>Independent point and event totals</span></header>
-    <div class="table-scroll"><table><thead><tr>
-      {@render lineHeader('lineName', 'Line', 'Line name', 'text')}
-      {@render lineHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
-      {@render lineHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
-      {@render lineHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
-      {@render lineHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
-      {@render lineHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
-      {@render lineHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
-      {@render lineHeader('cleanHolds', 'CH', statHelp.cleanHolds, 'number')}
-      {@render lineHeader('defensiveConversionPercentage', 'DC%', statHelp.defensiveConversion, 'number')}
-      {@render lineHeader('completions', 'C', statHelp.completions, 'number')}
-      {@render lineHeader('turnovers', 'T', statHelp.turnovers, 'number')}
-      {@render lineHeader('blocks', 'Blocks', statHelp.blocks, 'number')}
-      {@render lineHeader('goalsFor', 'GF', statHelp.goalsFor, 'number')}
-      {@render lineHeader('goalsAgainst', 'GA', statHelp.goalsAgainst, 'number')}
-      {@render lineHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
-    </tr></thead><tbody>
-      {#each sortedLineStatistics(statistics.lineStatistics) as stats}
-        <tr><th>{stats.lineName}</th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.cleanHolds}</td><td>{pct(stats.defensiveConversions, stats.defensiveConversionOpportunities)}</td><td>{stats.completions}</td><td>{stats.turnovers}</td><td>{stats.blocks}</td><td>{stats.goalsFor}</td><td>{stats.goalsAgainst}</td><td>{stats.plusMinus > 0 ? '+' : ''}{stats.plusMinus}</td></tr>
-      {/each}
-    </tbody></table></div>
-  </section>
-
-  <section class="stats-section">
-    <header><h2>Connections</h2><span>Known thrower and receiver pairings</span></header>
-    {#if statistics.connectionStatistics.length > 0}
+  {#if statisticsTab === 'summary'}
+    <section class="stats-section">
+      <header><h2>Lines</h2><span>Independent point and event totals</span></header>
       <div class="table-scroll"><table><thead><tr>
-        {@render connectionHeader('throwerName', 'Thrower', 'Thrower name', 'text')}
-        {@render connectionHeader('receiverName', 'Receiver', 'Receiver name', 'text')}
-        {@render connectionHeader('attempts', 'Att', statHelp.connectionAttempts, 'number')}
-        {@render connectionHeader('completions', 'C', statHelp.completions, 'number')}
-        {@render connectionHeader('completionPercentage', 'C%', statHelp.connectionPercentage, 'number')}
-        {@render connectionHeader('goals', 'G', statHelp.goals, 'number')}
-        {@render connectionHeader('turnovers', 'T', statHelp.turnovers, 'number')}
+        {@render lineHeader('lineName', 'Line', 'Line name', 'text')}
+        {@render lineHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
+        {@render lineHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
+        {@render lineHeader('oPointsPlayed', 'O', statHelp.offensePointsPlayed, 'number')}
+        {@render lineHeader('oWinPercentage', 'O%', statHelp.offenseWinPercentage, 'number')}
+        {@render lineHeader('dPointsPlayed', 'D', statHelp.defensePointsPlayed, 'number')}
+        {@render lineHeader('dWinPercentage', 'D%', statHelp.defenseWinPercentage, 'number')}
+        {@render lineHeader('cleanHolds', 'CH', statHelp.cleanHolds, 'number')}
+        {@render lineHeader('defensiveConversionPercentage', 'DC%', statHelp.defensiveConversion, 'number')}
+        {@render lineHeader('completions', 'C', statHelp.completions, 'number')}
+        {@render lineHeader('turnovers', 'TO', statHelp.turnovers, 'number')}
+        {@render lineHeader('blocks', 'Ds', statHelp.blocks, 'number')}
+        {@render lineHeader('goalsFor', 'GF', statHelp.goalsFor, 'number')}
+        {@render lineHeader('goalsAgainst', 'GA', statHelp.goalsAgainst, 'number')}
+        {@render lineHeader('plusMinus', '+/−', statHelp.plusMinus, 'number')}
       </tr></thead><tbody>
-        {#each sortedConnectionStatistics(statistics.connectionStatistics) as stats}
-          <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.throwerPlayerId}`)}>{stats.throwerName}</a></th><td><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.receiverPlayerId}`)}>{stats.receiverName}</a></td><td>{stats.attempts}</td><td>{stats.completions}</td><td>{pct(stats.completions, stats.attempts)}</td><td>{stats.goals}</td><td>{stats.turnovers}</td></tr>
+        {#each sortedLineStatistics(statistics.lineStatistics) as stats}
+          <tr><th>{stats.lineName}</th><td>{duration(stats.timePlayedMs)}</td><td>{stats.pointsPlayed}</td><td>{stats.oPointsPlayed}</td><td>{pct(stats.oPointsWon, stats.oPointsPlayed)}</td><td>{stats.dPointsPlayed}</td><td>{pct(stats.dPointsWon, stats.dPointsPlayed)}</td><td>{stats.cleanHolds}</td><td>{pct(stats.defensiveConversions, stats.defensiveConversionOpportunities)}</td><td>{stats.completions}</td><td>{stats.turnovers}</td><td>{stats.blocks}</td><td>{stats.goalsFor}</td><td>{stats.goalsAgainst}</td><td>{signed(stats.plusMinus)}</td></tr>
         {/each}
       </tbody></table></div>
-    {:else}
-      <p class="empty-stat">No passes with both players identified yet.</p>
-    {/if}
-  </section>
+    </section>
+
+    <section class="stats-section">
+      <header><h2>Connections</h2><span>Known thrower and receiver pairings</span></header>
+      {#if statistics.connectionStatistics.length > 0}
+        <div class="table-scroll"><table><thead><tr>
+          {@render connectionHeader('throwerName', 'Thrower', 'Thrower name', 'text')}
+          {@render connectionHeader('receiverName', 'Receiver', 'Receiver name', 'text')}
+          {@render connectionHeader('attempts', 'Att', statHelp.connectionAttempts, 'number')}
+          {@render connectionHeader('completions', 'C', statHelp.completions, 'number')}
+          {@render connectionHeader('completionPercentage', 'C%', statHelp.connectionPercentage, 'number')}
+          {@render connectionHeader('goals', 'G', statHelp.goals, 'number')}
+          {@render connectionHeader('turnovers', 'TO', statHelp.turnovers, 'number')}
+        </tr></thead><tbody>
+          {#each sortedConnectionStatistics(statistics.connectionStatistics) as stats}
+            <tr><th><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.throwerPlayerId}`)}>{stats.throwerName}</a></th><td><a href={resolve(`/teams/${data.tournament.teamSlug}/players/${stats.receiverPlayerId}`)}>{stats.receiverName}</a></td><td>{stats.attempts}</td><td>{stats.completions}</td><td>{pct(stats.completions, stats.attempts)}</td><td>{stats.goals}</td><td>{stats.turnovers}</td></tr>
+          {/each}
+        </tbody></table></div>
+      {:else}
+        <p class="empty-stat">No passes with both players identified yet.</p>
+      {/if}
+    </section>
+  {/if}
 {/snippet}
 
 <svelte:head><title>{data.tournament.name} stats - Ultimate Video Stats</title></svelte:head>
@@ -306,6 +441,14 @@
   {#if data.statistics.coverage.paperPlayerGames > 0 || data.statistics.coverage.paperPointGames > 0}
     <p class="coverage-note">Paper records contribute to these totals. Playing time, player O/D splits, and play-by-play fields are partial where complete video statistics were unavailable.</p>
   {/if}
+
+  <nav class="stats-tabs" aria-label="Statistics view">
+    <button class:active={statisticsTab === 'summary'} type="button" aria-pressed={statisticsTab === 'summary'} onclick={() => selectStatisticsTab('summary')}>Summary</button>
+    <button class:active={statisticsTab === 'offense'} type="button" aria-pressed={statisticsTab === 'offense'} onclick={() => selectStatisticsTab('offense')}>Offense</button>
+    <button class:active={statisticsTab === 'defense'} type="button" aria-pressed={statisticsTab === 'defense'} onclick={() => selectStatisticsTab('defense')}>Defense</button>
+    <button class:active={statisticsTab === 'playing-time'} type="button" aria-pressed={statisticsTab === 'playing-time'} onclick={() => selectStatisticsTab('playing-time')}>Playing time</button>
+    <button class:active={statisticsTab === 'averages'} type="button" aria-pressed={statisticsTab === 'averages'} onclick={() => selectStatisticsTab('averages')}>Averages</button>
+  </nav>
 
   <section class="stats-section">
     <header><h2>Games</h2></header>
@@ -328,6 +471,10 @@
                   title={game.title}
                   hasPaperStatistics={(game.statistics?.coverage.paperPlayerGames ?? 0) > 0 || (game.statistics?.coverage.paperPointGames ?? 0) > 0}
                   onSaved={() => void invalidateAll()}
+                />
+                <GameStatsTransferControl
+                  token={game.token}
+                  onImported={() => void invalidateAll()}
                 />
                 <a href={resolve(`/games/${game.token}`)}>{game.hasVideo ? 'Open video and editor' : 'Open game editor'}<ExternalLink size={13} aria-hidden="true" /></a>
               </div>
@@ -362,6 +509,10 @@
   .stats-heading p { margin-top:4px; color:#687066; font-size:12px; }
   .stats-heading :global(svg) { color:#087f9b; }
   .coverage-note { margin:-7px 0 15px; padding:9px 11px; border:1px solid #d9c98e; color:#655719; background:#fff8dc; font-size:10px; }
+  .stats-tabs { display:flex; gap:3px; margin:0 0 16px; padding:3px; overflow:auto; border:1px solid #cfd5cc; border-radius:6px; background:#eef1ec; }
+  .stats-tabs button { flex:1 0 auto; min-height:34px; padding:6px 14px; border:0; border-radius:4px; color:#5d655b; background:transparent; font-size:11px; font-weight:720; cursor:pointer; }
+  .stats-tabs button:hover { color:#252b24; background:#f8faf7; }
+  .stats-tabs button.active { color:#fff; background:#087f9b; box-shadow:0 1px 2px rgb(0 0 0 / 15%); }
   .stats-section { margin-bottom:22px; border:1px solid #cfd5cc; background:#fff; }
   .stats-section > header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:45px; padding:9px 12px; border-bottom:1px solid #dce1d9; background:#f7f9f6; }
   .stats-section h2 { font-size:14px; }
@@ -420,6 +571,7 @@
   tbody tr:hover > * { background:#f8faf7; }
   tbody th a { color:#087f9b; text-decoration:none; }
   tbody td a { color:#087f9b; text-decoration:none; }
+  .empty-table-row td { height:48px; color:#858d82; background:#fff; font-size:10px; text-align:center; }
   @media(max-width:680px){.team-summary{grid-template-columns:repeat(2,1fr)}.team-summary > div:nth-child(odd){border-left:0}.team-summary > div:nth-child(n+3){border-top:1px solid #e3e6e1}}
   @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 18px}.game-list time{display:none}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}.game-breakdown-actions > div{align-items:flex-start;flex-direction:column}}
 </style>

@@ -11,7 +11,13 @@ export type TeamEndzone = 'left' | 'right';
 export const AUTO_CAMERA_ENDZONE_RETURN_DELAY_MS = 10_000;
 
 /** Supported explanations for a tracked-team turnover. */
-export type TurnoverReason = 'drop' | 'block' | 'throwaway' | 'stall' | 'unknown';
+export type TurnoverReason =
+  | 'drop'
+  | 'block'
+  | 'throwaway'
+  | 'stall'
+  | 'penalty'
+  | 'unknown';
 
 /** Supported explanations for an unforced opponent turnover. */
 export type OpponentTurnoverReason = 'drop' | 'throwaway' | 'stall' | 'unknown';
@@ -322,6 +328,7 @@ export interface PointState {
 export interface PlayerStatistics {
   playerId: number;
   playerName: string;
+  gamesPlayed: number;
   timePlayedMs: number;
   pointsPlayed: number;
   oPointsPlayed: number;
@@ -333,6 +340,9 @@ export interface PlayerStatistics {
   receptions: number;
   receivingTargets: number;
   drops: number;
+  passerTurnovers: number;
+  throwaways: number;
+  stalls: number;
   touches: number;
   turnovers: number;
   goals: number;
@@ -341,7 +351,38 @@ export interface PlayerStatistics {
   blocks: number;
   pulls: number;
   plusMinus: number;
+  extendedPlusMinus: number;
+  oEfficiency: number;
+  dEfficiency: number;
   timeWithDiscMs: number;
+  oCompletions: number;
+  oThrowingAttempts: number;
+  oReceptions: number;
+  oReceivingTargets: number;
+  oDrops: number;
+  oPasserTurnovers: number;
+  oThrowaways: number;
+  oStalls: number;
+  oTouches: number;
+  oTurnovers: number;
+  oGoals: number;
+  oAssists: number;
+  oHockeyAssists: number;
+  oBlocks: number;
+  dCompletions: number;
+  dThrowingAttempts: number;
+  dReceptions: number;
+  dReceivingTargets: number;
+  dDrops: number;
+  dPasserTurnovers: number;
+  dThrowaways: number;
+  dStalls: number;
+  dTouches: number;
+  dTurnovers: number;
+  dGoals: number;
+  dAssists: number;
+  dHockeyAssists: number;
+  dBlocks: number;
 }
 
 /** Statistics attributed to one tournament line without summing player totals. */
@@ -852,6 +893,9 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
       stats.assists = paper.assists;
       stats.goals = paper.goals;
       stats.blocks = paper.blocks;
+      // Paper records do not identify turnovers by player, so this is the
+      // positive-only portion of extended plus/minus.
+      stats.extendedPlusMinus = paper.goals + paper.assists + paper.blocks;
     }
     const scorerGoals = new Map<number, number>();
     for (const point of data.manualPoints) {
@@ -866,6 +910,10 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
         warnings.push(`${name}'s paper total has ${paper.goals} goals, but the point summaries credit ${detailedGoals}.`);
       }
     }
+  }
+
+  for (const stats of players.values()) {
+    stats.gamesPlayed = playerHasRecordedStatistics(stats) ? 1 : 0;
   }
 
   return {
@@ -1102,8 +1150,11 @@ function calculatePoint(
         ) {
           warnings.push(`Point ${point.sequenceNumber} has a goal thrown by someone other than the current handler.`);
         }
-      } else if (possession !== 'defense') {
-        warnings.push(`Point ${point.sequenceNumber} records a conceded goal during tracked-team possession.`);
+      } else {
+        const callahan = (event.payload as ConcededPayload).callahan;
+        if ((callahan && possession !== 'offense') || (!callahan && possession !== 'defense')) {
+          warnings.push(`Point ${point.sequenceNumber} records a conceded goal during inconsistent possession.`);
+        }
       }
       terminalEvent = event;
       activeAtTerminal = new Set(active.keys());
@@ -1166,6 +1217,7 @@ function calculatePointStatistics(
     ? orderedEvents.findIndex((event) => event.id === terminalEvent.id)
     : -1;
   const events = terminalIndex >= 0 ? orderedEvents.slice(0, terminalIndex + 1) : orderedEvents;
+  const phase = point.startingPossession === 'offense' ? 'o' : 'd';
 
   if (terminalEvent) {
     const pointDuration = Math.max(0, terminalEvent.timeMs - point.startTimeMs);
@@ -1222,7 +1274,16 @@ function calculatePointStatistics(
     const plusMinus = terminalEvent.type === 'goal' ? 1 : -1;
     for (const playerId of activeAtTerminal) {
       const stats = players.get(playerId);
-      if (stats) stats.plusMinus += plusMinus;
+      if (!stats) continue;
+      stats.plusMinus += plusMinus;
+      if (phase === 'o') stats.oEfficiency += plusMinus;
+      else stats.dEfficiency += plusMinus;
+      if (
+        terminalEvent.type === 'conceded' &&
+        (terminalEvent.payload as ConcededPayload).callahan
+      ) {
+        stats.extendedPlusMinus -= 1;
+      }
     }
   }
 
@@ -1256,7 +1317,10 @@ function calculatePointStatistics(
       case 'possession_start': {
         const playerId = (event.payload as PossessionStartPayload).playerId;
         closeHandler(event.timeMs);
-        if (playerId !== null) increment(players, playerId, 'touches');
+        if (playerId !== null) {
+          increment(players, playerId, 'touches');
+          incrementPhase(players, playerId, phase, 'Touches');
+        }
         handlerId = playerId;
         handlerStartMs = event.timeMs;
         break;
@@ -1267,11 +1331,16 @@ function calculatePointStatistics(
         if (payload.throwerId !== null) {
           increment(players, payload.throwerId, 'completions');
           increment(players, payload.throwerId, 'throwingAttempts');
+          incrementPhase(players, payload.throwerId, phase, 'Completions');
+          incrementPhase(players, payload.throwerId, phase, 'ThrowingAttempts');
         }
         if (payload.receiverId !== null) {
           increment(players, payload.receiverId, 'receptions');
           increment(players, payload.receiverId, 'receivingTargets');
           increment(players, payload.receiverId, 'touches');
+          incrementPhase(players, payload.receiverId, phase, 'Receptions');
+          incrementPhase(players, payload.receiverId, phase, 'ReceivingTargets');
+          incrementPhase(players, payload.receiverId, phase, 'Touches');
         }
         addConnectionOutcome(
           connections,
@@ -1291,17 +1360,35 @@ function calculatePointStatistics(
         closeHandler(event.timeMs);
         if (payload.throwerId !== null) {
           increment(players, payload.throwerId, 'throwingAttempts');
+          incrementPhase(players, payload.throwerId, phase, 'ThrowingAttempts');
+          if (payload.reason !== 'drop') {
+            increment(players, payload.throwerId, 'passerTurnovers');
+            incrementPhase(players, payload.throwerId, phase, 'PasserTurnovers');
+            if (payload.reason === 'throwaway') {
+              increment(players, payload.throwerId, 'throwaways');
+              incrementPhase(players, payload.throwerId, phase, 'Throwaways');
+            } else if (payload.reason === 'stall') {
+              increment(players, payload.throwerId, 'stalls');
+              incrementPhase(players, payload.throwerId, phase, 'Stalls');
+            }
+          }
         }
         if (payload.intendedReceiverId !== null) {
           increment(players, payload.intendedReceiverId, 'receivingTargets');
+          incrementPhase(players, payload.intendedReceiverId, phase, 'ReceivingTargets');
           if (payload.reason === 'drop') {
             increment(players, payload.intendedReceiverId, 'drops');
+            incrementPhase(players, payload.intendedReceiverId, phase, 'Drops');
           }
         }
         const chargedPlayerId = payload.reason === 'drop'
           ? payload.intendedReceiverId
           : payload.throwerId;
-        if (chargedPlayerId !== null) increment(players, chargedPlayerId, 'turnovers');
+        if (chargedPlayerId !== null) {
+          increment(players, chargedPlayerId, 'turnovers');
+          incrementPhase(players, chargedPlayerId, phase, 'Turnovers');
+          adjust(players, chargedPlayerId, 'extendedPlusMinus', -1);
+        }
         addConnectionOutcome(
           connections,
           players,
@@ -1317,7 +1404,11 @@ function calculatePointStatistics(
       case 'defended': {
         closeHandler(event.timeMs);
         const defenderId = (event.payload as DefendedPayload).defenderId;
-        if (defenderId !== null) increment(players, defenderId, 'blocks');
+        if (defenderId !== null) {
+          increment(players, defenderId, 'blocks');
+          incrementPhase(players, defenderId, phase, 'Blocks');
+          adjust(players, defenderId, 'extendedPlusMinus', 1);
+        }
         if (line) line.blocks += 1;
         team.defensiveConversionOpportunities += 1;
         if (line) line.defensiveConversionOpportunities += 1;
@@ -1337,18 +1428,30 @@ function calculatePointStatistics(
         closeHandler(event.timeMs);
         if (payload.receiverId !== null) {
           increment(players, payload.receiverId, 'goals');
-          if (payload.callahan) increment(players, payload.receiverId, 'blocks');
+          incrementPhase(players, payload.receiverId, phase, 'Goals');
+          adjust(players, payload.receiverId, 'extendedPlusMinus', payload.callahan ? 2 : 1);
+          if (payload.callahan) {
+            increment(players, payload.receiverId, 'blocks');
+            incrementPhase(players, payload.receiverId, phase, 'Blocks');
+          }
         }
         if (!payload.callahan) {
           if (payload.throwerId !== null) {
             increment(players, payload.throwerId, 'assists');
             increment(players, payload.throwerId, 'completions');
             increment(players, payload.throwerId, 'throwingAttempts');
+            incrementPhase(players, payload.throwerId, phase, 'Assists');
+            incrementPhase(players, payload.throwerId, phase, 'Completions');
+            incrementPhase(players, payload.throwerId, phase, 'ThrowingAttempts');
+            adjust(players, payload.throwerId, 'extendedPlusMinus', 1);
           }
           if (payload.receiverId !== null) {
             increment(players, payload.receiverId, 'receptions');
             increment(players, payload.receiverId, 'receivingTargets');
             increment(players, payload.receiverId, 'touches');
+            incrementPhase(players, payload.receiverId, phase, 'Receptions');
+            incrementPhase(players, payload.receiverId, phase, 'ReceivingTargets');
+            incrementPhase(players, payload.receiverId, phase, 'Touches');
           }
           addConnectionOutcome(
             connections,
@@ -1370,6 +1473,12 @@ function calculatePointStatistics(
               players,
               previousCompletion.payload.throwerId,
               'hockeyAssists',
+            );
+            incrementPhase(
+              players,
+              previousCompletion.payload.throwerId,
+              phase,
+              'HockeyAssists',
             );
           }
         } else {
@@ -1474,6 +1583,7 @@ function emptyPlayerStatistics(player: Pick<TrackingPlayer, 'id' | 'name'>): Pla
   return {
     playerId: player.id,
     playerName: player.name,
+    gamesPlayed: 0,
     timePlayedMs: 0,
     pointsPlayed: 0,
     oPointsPlayed: 0,
@@ -1485,6 +1595,9 @@ function emptyPlayerStatistics(player: Pick<TrackingPlayer, 'id' | 'name'>): Pla
     receptions: 0,
     receivingTargets: 0,
     drops: 0,
+    passerTurnovers: 0,
+    throwaways: 0,
+    stalls: 0,
     touches: 0,
     turnovers: 0,
     goals: 0,
@@ -1493,7 +1606,38 @@ function emptyPlayerStatistics(player: Pick<TrackingPlayer, 'id' | 'name'>): Pla
     blocks: 0,
     pulls: 0,
     plusMinus: 0,
+    extendedPlusMinus: 0,
+    oEfficiency: 0,
+    dEfficiency: 0,
     timeWithDiscMs: 0,
+    oCompletions: 0,
+    oThrowingAttempts: 0,
+    oReceptions: 0,
+    oReceivingTargets: 0,
+    oDrops: 0,
+    oPasserTurnovers: 0,
+    oThrowaways: 0,
+    oStalls: 0,
+    oTouches: 0,
+    oTurnovers: 0,
+    oGoals: 0,
+    oAssists: 0,
+    oHockeyAssists: 0,
+    oBlocks: 0,
+    dCompletions: 0,
+    dThrowingAttempts: 0,
+    dReceptions: 0,
+    dReceivingTargets: 0,
+    dDrops: 0,
+    dPasserTurnovers: 0,
+    dThrowaways: 0,
+    dStalls: 0,
+    dTouches: 0,
+    dTurnovers: 0,
+    dGoals: 0,
+    dAssists: 0,
+    dHockeyAssists: 0,
+    dBlocks: 0,
   };
 }
 
@@ -1572,6 +1716,60 @@ function increment(
   if (stats && typeof stats[field] === 'number') {
     (stats[field] as number) += 1;
   }
+}
+
+type PlayerPhase = 'o' | 'd';
+type PlayerPhaseField =
+  | 'Completions'
+  | 'ThrowingAttempts'
+  | 'Receptions'
+  | 'ReceivingTargets'
+  | 'Drops'
+  | 'PasserTurnovers'
+  | 'Throwaways'
+  | 'Stalls'
+  | 'Touches'
+  | 'Turnovers'
+  | 'Goals'
+  | 'Assists'
+  | 'HockeyAssists'
+  | 'Blocks';
+
+function incrementPhase(
+  players: Map<number, PlayerStatistics>,
+  playerId: number,
+  phase: PlayerPhase,
+  field: PlayerPhaseField,
+): void {
+  increment(players, playerId, `${phase}${field}` as keyof PlayerStatistics);
+}
+
+function adjust(
+  players: Map<number, PlayerStatistics>,
+  playerId: number,
+  field: keyof PlayerStatistics,
+  amount: number,
+): void {
+  const stats = players.get(playerId);
+  if (stats && typeof stats[field] === 'number') {
+    (stats[field] as number) += amount;
+  }
+}
+
+function playerHasRecordedStatistics(stats: PlayerStatistics): boolean {
+  return (
+    stats.timePlayedMs > 0 ||
+    stats.pointsPlayed > 0 ||
+    stats.completions > 0 ||
+    stats.receptions > 0 ||
+    stats.turnovers > 0 ||
+    stats.goals > 0 ||
+    stats.assists > 0 ||
+    stats.hockeyAssists > 0 ||
+    stats.blocks > 0 ||
+    stats.pulls > 0 ||
+    stats.touches > 0
+  );
 }
 
 function connectionKey(throwerPlayerId: number, receiverPlayerId: number): string {
