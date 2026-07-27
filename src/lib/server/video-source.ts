@@ -38,6 +38,16 @@ export async function validateVideoSource(value: string): Promise<string> {
   return url.href;
 }
 
+/**
+ * Return an HTTP(S) source that a browser can stream without passing its
+ * response body through SvelteKit. Server-local files require the existing
+ * same-origin streaming endpoint and therefore return null.
+ */
+export function directBrowserVideoSource(source: string): string | null {
+  const url = new URL(source);
+  return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+}
+
 /** Stream a validated source with browser-compatible byte range handling. */
 export async function videoSourceResponse(
   source: string,
@@ -48,7 +58,13 @@ export async function videoSourceResponse(
   if (url.protocol === 'file:') {
     return localVideoResponse(url, request, headOnly);
   }
-  return remoteVideoResponse(url, request, headOnly);
+  return new Response(null, {
+    status: 307,
+    headers: {
+      'Cache-Control': 'private, no-store',
+      Location: url.href,
+    },
+  });
 }
 
 async function localVideoResponse(
@@ -93,46 +109,6 @@ async function localVideoResponse(
       : nodeStreamBody(createReadStream(filename, { start: range.start, end: range.end })),
     { status: 206, headers },
   );
-}
-
-async function remoteVideoResponse(
-  url: URL,
-  request: Request,
-  headOnly: boolean,
-): Promise<Response> {
-  const headers = new Headers();
-  const range = request.headers.get('range');
-  if (range) {
-    headers.set('Range', range);
-  }
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(url, {
-      method: headOnly ? 'HEAD' : 'GET',
-      headers,
-      redirect: 'follow',
-      signal: request.signal,
-    });
-  } catch {
-    return new Response('Remote video is unavailable.', { status: 502 });
-  }
-
-  const responseHeaders = new Headers({
-    'Cache-Control': 'private, max-age=300',
-    'Content-Type': upstream.headers.get('content-type') ?? videoContentType(url.pathname),
-  });
-  for (const name of ['accept-ranges', 'content-length', 'content-range', 'etag', 'last-modified']) {
-    const value = upstream.headers.get(name);
-    if (value) {
-      responseHeaders.set(name, value);
-    }
-  }
-  return new Response(headOnly ? null : upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders,
-  });
 }
 
 function parseRange(header: string | null, size: number): ByteRange | null {

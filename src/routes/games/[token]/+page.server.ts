@@ -5,6 +5,7 @@ import { CatalogRepository } from '$lib/server/catalog';
 import { requireGameAccess } from '$lib/server/access';
 import { GameTrackingRepository } from '$lib/server/game-tracking';
 import { ShareLinkRepository } from '$lib/server/share-links';
+import { directBrowserVideoSource } from '$lib/server/video-source';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ params, locals, url }) => {
@@ -12,6 +13,9 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
     redirect(303, `${resolve('/login')}?next=${encodeURIComponent(url.pathname)}`);
   }
   const game = requireGameAccess(locals, params.token);
+  const videoSource = game.hasVideo
+    ? new CatalogRepository().getVideoSourceByToken(game.token)
+    : null;
   const tracking = new GameTrackingRepository().getSnapshot(params.token);
   if (!tracking) error(404, 'Game not found.');
   const requestedEventId = optionalNonNegativeInteger(url.searchParams.get('event'));
@@ -40,7 +44,9 @@ export const load: PageServerLoad = ({ params, locals, url }) => {
       hasVideo: game.hasVideo,
       settings: game.settings,
       metadataUrl: game.hasVideo ? resolve(`/api/games/${game.token}/metadata`) : null,
-      videoUrl: game.hasVideo ? resolve(`/api/games/${game.token}/video`) : null,
+      videoUrl: videoSource
+        ? directBrowserVideoSource(videoSource) ?? resolve(`/api/games/${game.token}/video`)
+        : null,
     },
   };
 };

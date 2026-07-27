@@ -1798,6 +1798,7 @@
               bind:this={videoElement}
               class:source-hidden={perspectiveMode}
               src={videoUrl}
+              crossorigin="anonymous"
               preload="metadata"
               playsinline
               aria-label={videoName}

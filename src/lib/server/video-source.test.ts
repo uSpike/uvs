@@ -3,7 +3,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateVideoSource, videoSourceResponse } from './video-source';
+import {
+  directBrowserVideoSource,
+  validateVideoSource,
+  videoSourceResponse,
+} from './video-source';
 
 const temporaryDirectories: string[] = [];
 
@@ -32,6 +36,27 @@ async function largeVideoFixture(): Promise<string> {
 }
 
 describe('server video sources', () => {
+  it('selects only remote sources for direct browser streaming', () => {
+    expect(directBrowserVideoSource('https://cdn.example.com/game.mp4')).toBe(
+      'https://cdn.example.com/game.mp4',
+    );
+    expect(directBrowserVideoSource('file:///srv/videos/game.mp4')).toBeNull();
+  });
+
+  it('redirects remote video requests without proxying their bodies', async () => {
+    const response = await videoSourceResponse(
+      'https://cdn.example.com/game.mp4?signature=secret',
+      new Request('http://localhost/video', { headers: { Range: 'bytes=100-200' } }),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://cdn.example.com/game.mp4?signature=secret',
+    );
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(response.body).toBeNull();
+  });
+
   it('validates a server-local file URL', async () => {
     const url = await videoFixture();
     await expect(validateVideoSource(url)).resolves.toBe(url);
