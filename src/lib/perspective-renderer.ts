@@ -130,8 +130,6 @@ export class PerspectiveRenderer {
   private readonly upUniform: WebGLUniformLocation;
   private readonly frustumUniform: WebGLUniformLocation;
   private readonly centerYawUniform: WebGLUniformLocation;
-  private textureWidth = 0;
-  private textureHeight = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
@@ -191,30 +189,7 @@ export class PerspectiveRenderer {
     gl.bindVertexArray(this.vertexArray);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
-    if (this.textureWidth !== video.videoWidth || this.textureHeight !== video.videoHeight) {
-      this.textureWidth = video.videoWidth;
-      this.textureHeight = video.videoHeight;
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        this.textureWidth,
-        this.textureHeight,
-        0,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        null,
-      );
-    }
-    gl.texSubImage2D(
-      gl.TEXTURE_2D,
-      0,
-      0,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      video,
-    );
+    uploadVideoTextureFrame(gl, video);
 
     const extent = options.extent;
     gl.uniform4f(
@@ -258,4 +233,24 @@ export class PerspectiveRenderer {
     this.gl.deleteVertexArray(this.vertexArray);
     this.gl.deleteProgram(this.program);
   }
+}
+
+/**
+ * Upload the current decoded frame while preserving Chromium's accelerated
+ * video-to-WebGL path. Chromium on Linux deliberately excludes
+ * `texSubImage2D(video)` from that path because it performs poorly there
+ * (Chromium issue 1181562).
+ */
+export function uploadVideoTextureFrame(
+  gl: WebGL2RenderingContext,
+  video: HTMLVideoElement,
+): void {
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    video,
+  );
 }
