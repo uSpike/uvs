@@ -20,11 +20,18 @@
     Users,
     X,
   } from '@lucide/svelte';
-  import { autoCameraEndzoneAtTime, autoSkipTargetTimeMs, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type ManualPlayerGameStatistics, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
+  import { autoCameraEndzoneAtTime, autoSkipTargetTimeMs, calculatePointResults, calculatePointState, calculateScoreAtTime, classifyMatchupRoles, latestHandlerSpatialAnnotation, latestPointTimeMs, type EventSpatialAnnotation, type GameEventPayload, type GameEventType, type GameHighlight, type GameTrackingSnapshot, type SpatialAnnotationRole, type StartingPossession, type StrategyKind, type TeamEndzone, type TrackingEvent, type TrackingPoint } from './game-stats';
   import type { GameRecordingMode } from './game-settings';
   import type { UVSViewerSpatialMarker, UVSViewerSpatialPoint } from './viewer-types';
   import { gameEventLabel } from './game-events';
   import type { MatchupRole } from './matchup';
+  import {
+    cumulativePaperPointScores,
+    optionalPaperStatistic,
+    paperPointScoringSides,
+    paperStatisticOrZero,
+    type OptionalPaperStatistic,
+  } from './paper-stats-form';
   import { STAT_DESCRIPTIONS as statHelp } from './stat-descriptions';
 
   interface PlaybackSnapshot {
@@ -48,6 +55,7 @@
     onHighlightOverlayChange,
     onEditingChange,
     onSnapshotChange,
+    onManualSummarySaved = () => {},
     paperOnlyMode = false,
     autoStartEditing = false,
   }: {
@@ -73,6 +81,7 @@
     } | null) => void;
     onEditingChange: (editing: boolean) => void;
     onSnapshotChange: (snapshot: GameTrackingSnapshot) => void;
+    onManualSummarySaved?: () => void;
     paperOnlyMode?: boolean;
     autoStartEditing?: boolean;
   } = $props();
@@ -86,18 +95,26 @@
     clientY: number;
   }
 
+  interface ManualPlayerDraft {
+    playerId: number;
+    pointsPlayed: OptionalPaperStatistic;
+    hockeyAssists: OptionalPaperStatistic;
+    assists: OptionalPaperStatistic;
+    goals: OptionalPaperStatistic;
+    blocks: OptionalPaperStatistic;
+  }
+
   interface ManualPointDraft {
     lineId: number;
     startingPossession: StartingPossession;
     initialDefenseType: string;
     offenseStrategyId: number;
     defenseStrategyId: number;
-    ourTurnovers: number;
+    ourTurnovers: OptionalPaperStatistic;
     scoringMethod: string;
     throwerPlayerId: string;
     receiverPlayerId: string;
-    ourScore: number;
-    opponentScore: number;
+    ourGoal: boolean;
   }
 
   interface TimelineContextItem {
@@ -168,7 +185,7 @@
   let highlightPlaylistActive = $state(false);
   let highlightPlaylistPosition = $state(0);
   let highlightPlaylistRun = 0;
-  let manualPlayerDrafts = $state<ManualPlayerGameStatistics[]>((() => manualPlayerRows(initialSnapshot))());
+  let manualPlayerDrafts = $state<ManualPlayerDraft[]>((() => manualPlayerRows(initialSnapshot))());
   let manualPointDrafts = $state<ManualPointDraft[]>((() => manualPointRows(initialSnapshot))());
   let observedOpenPointId = $state<number | null>(null);
   let observedOpenPointEndMs = $state(0);
@@ -412,32 +429,38 @@
     }
   }
 
-  function manualPlayerRows(value: GameTrackingSnapshot): ManualPlayerGameStatistics[] {
+  function manualPlayerRows(value: GameTrackingSnapshot): ManualPlayerDraft[] {
     const stored = new Map(value.data.manualPlayerStatistics.map((stats) => [stats.playerId, stats]));
     return value.data.players.map((player) => ({
       playerId: player.id,
-      pointsPlayed: stored.get(player.id)?.pointsPlayed ?? 0,
-      hockeyAssists: stored.get(player.id)?.hockeyAssists ?? 0,
-      assists: stored.get(player.id)?.assists ?? 0,
-      goals: stored.get(player.id)?.goals ?? 0,
-      blocks: stored.get(player.id)?.blocks ?? 0,
+      pointsPlayed: optionalPaperStatistic(stored.get(player.id)?.pointsPlayed ?? 0),
+      hockeyAssists: optionalPaperStatistic(stored.get(player.id)?.hockeyAssists ?? 0),
+      assists: optionalPaperStatistic(stored.get(player.id)?.assists ?? 0),
+      goals: optionalPaperStatistic(stored.get(player.id)?.goals ?? 0),
+      blocks: optionalPaperStatistic(stored.get(player.id)?.blocks ?? 0),
     }));
   }
 
   function manualPointRows(value: GameTrackingSnapshot): ManualPointDraft[] {
-    return value.data.manualPoints.map((point) => ({
-      lineId: point.lineId,
-      startingPossession: point.startingPossession,
-      initialDefenseType: point.initialDefenseType ?? '',
-      offenseStrategyId: point.offenseStrategyId ?? 0,
-      defenseStrategyId: point.defenseStrategyId ?? 0,
-      ourTurnovers: point.ourTurnovers,
-      scoringMethod: point.scoringMethod ?? '',
-      throwerPlayerId: point.throwerPlayerId?.toString() ?? '',
-      receiverPlayerId: point.receiverPlayerId?.toString() ?? '',
-      ourScore: point.ourScore,
-      opponentScore: point.opponentScore,
-    }));
+    const ourGoals = paperPointScoringSides(
+      value.data.game.initialOurScore,
+      value.data.game.initialOpponentScore,
+      value.data.manualPoints,
+    );
+    return value.data.manualPoints.map((point, index) => {
+      return {
+        lineId: point.lineId,
+        startingPossession: point.startingPossession,
+        initialDefenseType: point.initialDefenseType ?? '',
+        offenseStrategyId: point.offenseStrategyId ?? 0,
+        defenseStrategyId: point.defenseStrategyId ?? 0,
+        ourTurnovers: optionalPaperStatistic(point.ourTurnovers),
+        scoringMethod: point.scoringMethod ?? '',
+        throwerPlayerId: point.throwerPlayerId?.toString() ?? '',
+        receiverPlayerId: point.receiverPlayerId?.toString() ?? '',
+        ourGoal: ourGoals[index],
+      };
+    });
   }
 
   function resetManualDrafts(value: GameTrackingSnapshot = snapshot): void {
@@ -447,22 +470,17 @@
 
   function addManualPoint(): void {
     const previous = manualPointDrafts.at(-1);
-    const scoreBeforePrevious = manualPointDrafts.length > 1
-      ? manualPointDrafts.at(-2)!.ourScore
-      : snapshot.data.game.initialOurScore;
-    const previousWasOurGoal = previous ? previous.ourScore > scoreBeforePrevious : false;
     manualPointDrafts.push({
       lineId: previous?.lineId ?? snapshot.data.lines[0]?.id ?? 0,
-      startingPossession: previousWasOurGoal ? 'defense' : 'offense',
+      startingPossession: previous?.ourGoal ? 'defense' : 'offense',
       initialDefenseType: '',
       offenseStrategyId: 0,
       defenseStrategyId: 0,
-      ourTurnovers: 0,
+      ourTurnovers: undefined,
       scoringMethod: '',
       throwerPlayerId: '',
       receiverPlayerId: '',
-      ourScore: (previous?.ourScore ?? snapshot.data.game.initialOurScore) + 1,
-      opponentScore: previous?.opponentScore ?? snapshot.data.game.initialOpponentScore,
+      ourGoal: true,
     });
   }
 
@@ -471,18 +489,28 @@
   }
 
   function manualPointIsOurGoal(index: number): boolean {
-    const previousOurScore = index === 0
-      ? snapshot.data.game.initialOurScore
-      : manualPointDrafts[index - 1].ourScore;
-    return manualPointDrafts[index].ourScore > previousOurScore;
+    return manualPointDrafts[index].ourGoal;
   }
 
   async function saveManualSummary(): Promise<void> {
+    const scores = cumulativePaperPointScores(
+      snapshot.data.game.initialOurScore,
+      snapshot.data.game.initialOpponentScore,
+      manualPointDrafts.map((point) => point.ourGoal),
+    );
     const saved = await mutate({
       operation: 'saveManualSummary',
-      playerStatistics: manualPlayerDrafts,
+      playerStatistics: manualPlayerDrafts.map((stats) => ({
+        playerId: stats.playerId,
+        pointsPlayed: paperStatisticOrZero(stats.pointsPlayed),
+        hockeyAssists: paperStatisticOrZero(stats.hockeyAssists),
+        assists: paperStatisticOrZero(stats.assists),
+        goals: paperStatisticOrZero(stats.goals),
+        blocks: paperStatisticOrZero(stats.blocks),
+      })),
       points: manualPointDrafts.map((point, index) => ({
-        ...point,
+        lineId: point.lineId,
+        startingPossession: point.startingPossession,
         initialDefenseType: point.startingPossession === 'defense'
           ? point.defenseStrategyId
             ? strategyName(point.defenseStrategyId)
@@ -490,6 +518,7 @@
           : null,
         offenseStrategyId: point.offenseStrategyId || null,
         defenseStrategyId: point.defenseStrategyId || null,
+        ourTurnovers: paperStatisticOrZero(point.ourTurnovers),
         scoringMethod: manualPointIsOurGoal(index) ? point.scoringMethod || null : null,
         throwerPlayerId: manualPointIsOurGoal(index) && point.throwerPlayerId
           ? Number(point.throwerPlayerId)
@@ -497,9 +526,13 @@
         receiverPlayerId: manualPointIsOurGoal(index) && point.receiverPlayerId
           ? Number(point.receiverPlayerId)
           : null,
+        ...scores[index],
       })),
     });
-    if (saved) resetManualDrafts(saved);
+    if (saved) {
+      resetManualDrafts(saved);
+      onManualSummarySaved();
+    }
   }
 
   function pauseForDraft(): void {
@@ -2100,7 +2133,7 @@
           {/if}
         </header>
         <p class="paper-coverage-note">
-          Player totals supply points, hockey assists, assists, goals, and Ds. Point rows supply score and line results. Play-by-play-only fields remain partial or unavailable.
+          Player totals supply points, hockey assists, assists, goals, and Ds. Point rows identify who scored and the line result. Play-by-play-only fields remain partial or unavailable.
         </p>
         <form class="paper-form" onsubmit={(event) => { event.preventDefault(); void saveManualSummary(); }}>
           <fieldset disabled={!editing || saving}>
@@ -2125,13 +2158,13 @@
           </fieldset>
 
           <fieldset disabled={!editing || saving}>
-            <legend>Point summaries <small>Scores are after each point</small></legend>
+            <legend>Point summaries <small>Check = us; clear = opponent</small></legend>
             {#if manualPointDrafts.length === 0}
               <p class="paper-empty">No paper points entered.</p>
             {:else}
               <div class="paper-table-scroll">
                 <table class="paper-point-table">
-                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>Start</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Us</th><th title={statHelp.score}>Them</th><th>How we scored</th><th title={statHelp.assists}>Thrower</th><th title={statHelp.goals}>Receiver</th><th></th></tr></thead>
+                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>Start</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Scored by</th><th>How we scored</th><th title={statHelp.assists}>Thrower</th><th title={statHelp.goals}>Receiver</th><th></th></tr></thead>
                   <tbody>
                     {#each manualPointDrafts as point, index}
                       <tr>
@@ -2146,8 +2179,16 @@
                           {/if}
                         </td>
                         <td><input bind:value={point.ourTurnovers} type="number" min="0" max="99" aria-label={`Point ${index + 1} tracked-team turnovers`} /></td>
-                        <td><input bind:value={point.ourScore} type="number" min="0" max="999" aria-label={`Point ${index + 1} team score`} /></td>
-                        <td><input bind:value={point.opponentScore} type="number" min="0" max="999" aria-label={`Point ${index + 1} opponent score`} /></td>
+                        <td>
+                          <label class="paper-score-check">
+                            <input
+                              bind:checked={point.ourGoal}
+                              type="checkbox"
+                              aria-label={`Point ${index + 1} scored by our team; clear for opponent`}
+                            />
+                            <span>{point.ourGoal ? 'Us' : 'Them'}</span>
+                          </label>
+                        </td>
                         <td><input bind:value={point.scoringMethod} type="text" maxlength="80" disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} scoring method`} /></td>
                         <td>
                           <select bind:value={point.throwerPlayerId} disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} thrower`}>
@@ -2570,8 +2611,10 @@
   .paper-form input,.paper-form select { min-width:0; height:28px; padding:3px 5px; border:1px solid #484e46; border-radius:3px; color:#edf1eb; background:#252824; font-size:9px; }
   .paper-form input[type='number'] { width:62px; text-align:right; }
   .paper-point-table select { width:92px; }
-  .paper-point-table td:nth-child(4) input,.paper-point-table td:nth-child(8) input { width:130px; }
-  .paper-point-table td:nth-child(9) select,.paper-point-table td:nth-child(10) select { width:120px; }
+  .paper-point-table td:nth-child(4) input,.paper-point-table td:nth-child(7) input { width:130px; }
+  .paper-point-table td:nth-child(8) select,.paper-point-table td:nth-child(9) select { width:120px; }
+  .paper-score-check { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:58px; color:#d7ddd4; font-size:9px; font-weight:700; }
+  .paper-score-check input { width:14px; height:14px; padding:0; accent-color:#087f9b; }
   .paper-form input:disabled,.paper-form select:disabled { color:#6f766d; background:#20231f; }
   .paper-empty { margin:0; padding:10px; color:#858d82; background:#20231f; font-size:9px; }
   .paper-add,.paper-actions button { display:inline-flex; align-items:center; justify-content:center; gap:5px; width:max-content; min-height:32px; padding:0 9px; border:1px solid #474d45; border-radius:4px; color:#d2d8cf; background:#292d27; font-size:10px; font-weight:680; }

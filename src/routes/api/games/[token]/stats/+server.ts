@@ -81,7 +81,7 @@ export const POST: RequestHandler = async ({ request, params, locals }) => {
           ),
         );
       case 'saveManualSummary':
-        return json(repository.saveManualSummary(params.token, manualSummaryInput(body)));
+        return json(repository.saveManualSummary(params.token, _parseManualSummaryInput(body)));
       default:
         return json({ error: 'Select a supported statistics operation.' }, { status: 400 });
     }
@@ -119,7 +119,10 @@ function optionalEndzone(value: unknown): TeamEndzone | null {
   return value === null || value === undefined || value === '' ? null : endzone(value);
 }
 
-function manualSummaryInput(body: Record<string, unknown>): SaveManualSummaryInput {
+/** Parse paper statistics while treating deliberately blank count fields as zero. */
+export function _parseManualSummaryInput(
+  body: Record<string, unknown>,
+): SaveManualSummaryInput {
   if (!Array.isArray(body.playerStatistics) || !Array.isArray(body.points)) {
     throw new Error('Paper statistics must include player totals and point summaries.');
   }
@@ -128,11 +131,11 @@ function manualSummaryInput(body: Record<string, unknown>): SaveManualSummaryInp
       const row = record(value, `Paper player row ${index + 1}`);
       return {
         playerId: positiveInteger(row.playerId, `Paper player row ${index + 1}`),
-        pointsPlayed: nonNegativeInteger(row.pointsPlayed, 'Points played'),
-        hockeyAssists: nonNegativeInteger(row.hockeyAssists, 'Hockey assists'),
-        assists: nonNegativeInteger(row.assists, 'Assists'),
-        goals: nonNegativeInteger(row.goals, 'Goals'),
-        blocks: nonNegativeInteger(row.blocks, 'Defenses'),
+        pointsPlayed: nonNegativePaperInteger(row.pointsPlayed, 'Points played'),
+        hockeyAssists: nonNegativePaperInteger(row.hockeyAssists, 'Hockey assists'),
+        assists: nonNegativePaperInteger(row.assists, 'Assists'),
+        goals: nonNegativePaperInteger(row.goals, 'Goals'),
+        blocks: nonNegativePaperInteger(row.blocks, 'Defenses'),
       };
     }),
     points: body.points.map((value, index) => {
@@ -152,7 +155,10 @@ function manualSummaryInput(body: Record<string, unknown>): SaveManualSummaryInp
         initialDefenseType: optionalString(row.initialDefenseType),
         offenseStrategyId: optionalPositiveInteger(row.offenseStrategyId, 'Offense'),
         defenseStrategyId: optionalPositiveInteger(row.defenseStrategyId, 'Defense'),
-        ourTurnovers: nonNegativeInteger(row.ourTurnovers, `Paper point ${index + 1} turnovers`),
+        ourTurnovers: nonNegativePaperInteger(
+          row.ourTurnovers,
+          `Paper point ${index + 1} turnovers`,
+        ),
         scoringMethod: optionalString(row.scoringMethod),
         throwerPlayerId: optionalPositiveInteger(
           row.throwerPlayerId,
@@ -253,6 +259,12 @@ function nonNegativeInteger(value: unknown, name: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is invalid.`);
   return parsed;
+}
+
+function nonNegativePaperInteger(value: unknown, name: string): number {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value !== 'number') throw new Error(`${name} is invalid.`);
+  return nonNegativeInteger(value, name);
 }
 
 function finiteNumber(value: unknown, name: string): number {

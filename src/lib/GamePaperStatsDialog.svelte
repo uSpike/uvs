@@ -22,14 +22,6 @@
   let loading = $state(false);
   let error = $state('');
   let snapshot = $state.raw<GameTrackingSnapshot | null>(null);
-  let lastPaperSignature = '';
-
-  function paperSignature(value: GameTrackingSnapshot): string {
-    return JSON.stringify([
-      value.data.manualPlayerStatistics,
-      value.data.manualPoints,
-    ]);
-  }
 
   async function openEditor(): Promise<void> {
     open = true;
@@ -47,7 +39,6 @@
         );
       }
       snapshot = result;
-      lastPaperSignature = paperSignature(result);
       await tick();
     } catch (caught) {
       error = caught instanceof Error
@@ -66,11 +57,11 @@
 
   function handleSnapshotChange(value: GameTrackingSnapshot): void {
     snapshot = value;
-    const nextSignature = paperSignature(value);
-    if (nextSignature !== lastPaperSignature) {
-      lastPaperSignature = nextSignature;
-      onSaved();
-    }
+  }
+
+  function handleManualSummarySaved(): void {
+    closeEditor();
+    onSaved();
   }
 
   function handleWindowKeydown(event: KeyboardEvent): void {
@@ -132,6 +123,7 @@
             onHighlightOverlayChange={() => {}}
             onEditingChange={() => {}}
             onSnapshotChange={handleSnapshotChange}
+            onManualSummarySaved={handleManualSummarySaved}
             paperOnlyMode
             autoStartEditing
           />
