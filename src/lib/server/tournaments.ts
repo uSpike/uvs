@@ -513,7 +513,7 @@ export class TournamentRepository {
         `SELECT id, token, title, opponent_name, played_at
            FROM games
           WHERE tournament_id = ?
-          ORDER BY sort_order, id`,
+          ORDER BY COALESCE(played_at, created_at), id`,
       )
       .all(row.id) as Array<{
         id: number;

@@ -181,7 +181,12 @@ export class GameTrackingRepository {
   /** Load every game in a tournament for aggregate statistics. */
   listTournamentGameData(tournamentId: number): TrackingGameData[] {
     const tokens = this.database
-      .prepare('SELECT token FROM games WHERE tournament_id = ? ORDER BY sort_order, id')
+      .prepare(
+        `SELECT token
+           FROM games
+          WHERE tournament_id = ?
+          ORDER BY COALESCE(played_at, created_at), id`,
+      )
       .all(tournamentId) as Array<{ token: string }>;
     return tokens
       .map((row) => this.getGameData(row.token))
@@ -196,7 +201,7 @@ export class GameTrackingRepository {
            FROM games
            JOIN tournaments ON tournaments.id = games.tournament_id
           WHERE tournaments.season_roster_id = ?
-          ORDER BY tournaments.starts_on, tournaments.id, games.sort_order, games.id`,
+          ORDER BY COALESCE(games.played_at, games.created_at), games.id`,
       )
       .all(seasonRosterId) as Array<{ token: string }>;
     return tokens

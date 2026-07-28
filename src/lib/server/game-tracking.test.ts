@@ -79,14 +79,14 @@ function configuredGame() {
 }
 
 describe('GameTrackingRepository', () => {
-  it('lists season games in their custom event order', () => {
+  it('lists tournament and season games chronologically despite stale manual order', () => {
     const { catalog, tracking, rosterId, tournamentId, game } = configuredGame();
     const metadata = parseMetadataJsonl(metadataJsonl);
-    const laterGame = catalog.createGame({
+    const earlierGame = catalog.createGame({
       tournamentId,
       title: 'Union vs. Drift',
       opponentName: 'Drift',
-      playedAt: '2026-06-01T12:00',
+      playedAt: '2026-06-01T08:00',
       playerCount: 3,
       initialOurScore: 0,
       initialOpponentScore: 0,
@@ -95,11 +95,20 @@ describe('GameTrackingRepository', () => {
       metadata,
     });
 
-    catalog.moveGame(tournamentId, laterGame.id, 'earlier');
+    databases.at(-1)!
+      .prepare(
+        `UPDATE games
+            SET sort_order = CASE id WHEN ? THEN 0 ELSE 1 END
+          WHERE tournament_id = ?`,
+      )
+      .run(game.id, tournamentId);
 
     expect(
+      tracking.listTournamentGameData(tournamentId).map((data) => data.game.id),
+    ).toEqual([earlierGame.id, game.id]);
+    expect(
       tracking.listSeasonGameData(rosterId).map((data) => data.game.id),
-    ).toEqual([laterGame.id, game.id]);
+    ).toEqual([earlierGame.id, game.id]);
   });
 
   it('exports and atomically restores complete game statistics', () => {
