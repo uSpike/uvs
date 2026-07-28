@@ -35,11 +35,14 @@ describe('UVSVideoViewer', () => {
     expect(result.body).not.toContain('Open metadata');
   });
 
-  it('offers automatic camera resume as a separate playback preference', () => {
+  it('offers unified camera, fullscreen, playback, and shortcut controls', () => {
     const result = render(UVSVideoViewer);
 
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
+    expect(result.body.match(/mobile-skip-control/g)).toHaveLength(2);
+    expect(result.body.match(/mobile-seek-option/g)).toHaveLength(2);
+    expect(result.body).toContain('Double-tap the left or right side of the video');
     expect(result.body).toContain('Playback speed');
     expect(result.body).toContain('timeline-point-track');
     expect(result.body).toContain('Keyboard shortcuts');
@@ -49,9 +52,13 @@ describe('UVSVideoViewer', () => {
     expect(result.body).toContain('Forward 1 second');
     expect(result.body).toContain('1.25×');
     expect(result.body).toContain('1.5×');
-    expect(result.body).toContain('Turn on automatic camera');
-    expect(result.body).toContain('Disable AutoCam on play');
-    expect(result.body).toContain('AutoCam will turn on when playback resumes');
+    expect(result.body.match(/aria-label="Enable automatic panning"/g)).toHaveLength(1);
+    expect(result.body).toContain('Toggle automatic panning');
+    expect(result.body).toContain('Zoom in while viewer is focused');
+    expect(result.body).toContain('Zoom out while viewer is focused');
+    expect(result.body).toContain('Enter fullscreen');
+    expect(result.body).not.toContain('AutoCam on play');
+    expect(result.body).not.toContain('when playback resumes');
   });
 
   it('does not expose internal frame and FOV diagnostics', () => {

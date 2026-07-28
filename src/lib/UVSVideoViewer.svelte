@@ -10,7 +10,9 @@
     EllipsisVertical,
     FileVideo,
     Gauge,
+    Maximize2,
     Minus,
+    Minimize2,
     Pause,
     Play,
     Plus,
@@ -62,6 +64,14 @@
     unprojectPerspectivePoint,
   } from './perspective';
   import { canvasPixelRatio } from './render-resolution';
+  import {
+    doubleTapSeekSeconds,
+    pointerDistance,
+    pointerMidpoint,
+    zoomDirectionForKey,
+    type ViewerPointerPoint,
+    type ViewportTouchTap,
+  } from './viewer-input';
   import type {
     GameViewerSettings,
     UVSViewerKeyboardShortcut,
@@ -82,6 +92,9 @@
   const MAX_TILT_DEGREES = 30;
   const MIN_ROLL_DEGREES = -15;
   const MAX_ROLL_DEGREES = 15;
+  const TOUCH_PAN_THRESHOLD_PX = 8;
+  const TOUCH_TAP_MAX_DURATION_MS = 350;
+  const SYNTHETIC_DOUBLE_CLICK_WINDOW_MS = 500;
   const LEVEL_ORIENTATION = { tilt: 0, roll: 0 };
   const NO_DETECTIONS: WebDetection[] = [];
   const PLAYBACK_RATES = [1, 1.25, 1.5] as const;
@@ -91,8 +104,9 @@
     { key: 'A', description: 'Back 1 second' },
     { key: 'E', description: 'Forward 3 seconds' },
     { key: 'D', description: 'Forward 1 second' },
-    { key: '+', description: 'Zoom in' },
-    { key: '−', description: 'Zoom out' },
+    { key: 'R', description: 'Toggle automatic panning' },
+    { key: 'W', description: 'Zoom in while viewer is focused' },
+    { key: 'X', description: 'Zoom out while viewer is focused' },
     { key: '0', description: 'Reset view' },
   ];
   type PlaybackRate = (typeof PLAYBACK_RATES)[number];
@@ -120,6 +134,21 @@
     minimumAreaHistorySeconds: number;
     trustStateByDetection: Map<WebDetection, DetectionTrustState>;
     view: DetectionOverlayView;
+  }
+
+  interface LegacyFullscreenDocument extends Document {
+    webkitFullscreenElement?: Element | null;
+    webkitExitFullscreen?: () => Promise<void> | void;
+  }
+
+  interface LegacyFullscreenElement extends HTMLElement {
+    webkitRequestFullscreen?: () => Promise<void> | void;
+  }
+
+  interface TouchTapCandidate {
+    pointerId: number;
+    timestamp: number;
+    start: ViewerPointerPoint;
   }
 
   /** Parent-owned video and metadata. Local file controls are disabled while set. */
@@ -212,7 +241,6 @@
   let detectionAreaHistoryTrustKey = '';
   let detectionAreaHistoryBuildTimer: ReturnType<typeof setTimeout> | null = null;
   let autoCameraEnabled = false;
-  let autoCameraOnPlay = true;
   let autoControlsOpen = false;
   let autoCameraConfig: AutoCameraConfig = { ...DEFAULT_AUTO_CAMERA_CONFIG };
   let virtualAutoCameraPose: AutoCameraPose = {
@@ -247,6 +275,8 @@
   let timelineInteractionHideTimer: ReturnType<typeof setTimeout> | null = null;
   let timelineInteractionSection: UVSViewerTimelineSection | null = null;
   let timelineInteractionLeftPercent = 0;
+  let fullscreenActive = false;
+  let fullscreenSupported = false;
 
   let activePointer: number | null = null;
   let pointerStartX = 0;
@@ -255,6 +285,18 @@
   let pointerStartPanY = 0;
   let pointerStartYaw = 0;
   let pointerStartPitch = 0;
+  const touchPointers = new Map<number, ViewerPointerPoint>();
+  let touchTapCandidate: TouchTapCandidate | null = null;
+  let previousTouchTap: ViewportTouchTap | null = null;
+  let touchPanStarted = false;
+  let lastTouchInteractionTimestamp = Number.NEGATIVE_INFINITY;
+  let pinchPointerIds: [number, number] | null = null;
+  let pinchStartDistance = 1;
+  let pinchStartMidpoint: ViewerPointerPoint = { clientX: 0, clientY: 0 };
+  let pinchStartZoom = 1;
+  let pinchStartPanX = 0;
+  let pinchStartPanY = 0;
+  let pinchStartFov = DEFAULT_FOV_DEGREES;
   let adjustingSpatialMarker: number | null = null;
 
   $: localFilesEnabled = allowLocalFiles && source === null;
@@ -472,11 +514,21 @@
     });
     observer.observe(viewportElement);
     window.addEventListener('keydown', handlePlaybackKeydown);
+    const fullscreenDocument = document as LegacyFullscreenDocument;
+    fullscreenSupported = Boolean(
+      rootElement.requestFullscreen ||
+        (rootElement as LegacyFullscreenElement).webkitRequestFullscreen,
+    );
+    syncFullscreenState();
+    fullscreenDocument.addEventListener('fullscreenchange', syncFullscreenState);
+    fullscreenDocument.addEventListener('webkitfullscreenchange', syncFullscreenState);
 
     return () => {
       mounted = false;
       observer.disconnect();
       window.removeEventListener('keydown', handlePlaybackKeydown);
+      fullscreenDocument.removeEventListener('fullscreenchange', syncFullscreenState);
+      fullscreenDocument.removeEventListener('webkitfullscreenchange', syncFullscreenState);
     };
   });
 
@@ -816,9 +868,6 @@
   }
 
   function playbackStarted(): void {
-    if (autoCameraOnPlay && !autoCameraEnabled) {
-      setAutoCameraMode(true);
-    }
     playing = true;
     lastAutoCameraTickAt = performance.now();
     schedulePlaybackClock();
@@ -979,6 +1028,183 @@
     onSaveSettings?.();
   }
 
+  function currentFullscreenElement(): Element | null {
+    const fullscreenDocument = document as LegacyFullscreenDocument;
+    return fullscreenDocument.fullscreenElement ??
+      fullscreenDocument.webkitFullscreenElement ??
+      null;
+  }
+
+  function syncFullscreenState(): void {
+    fullscreenActive = currentFullscreenElement() === rootElement;
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    if (!fullscreenSupported) {
+      return;
+    }
+    const fullscreenDocument = document as LegacyFullscreenDocument;
+    try {
+      if (currentFullscreenElement()) {
+        const exitFullscreen =
+          fullscreenDocument.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen;
+        await Promise.resolve(exitFullscreen?.call(fullscreenDocument));
+      } else {
+        const fullscreenElement = rootElement as LegacyFullscreenElement;
+        const requestFullscreen =
+          fullscreenElement.requestFullscreen ?? fullscreenElement.webkitRequestFullscreen;
+        await Promise.resolve(requestFullscreen?.call(fullscreenElement));
+      }
+    } catch (error) {
+      console.warn('Could not change video viewer fullscreen mode.', error);
+    }
+  }
+
+  function pointerPoint(event: PointerEvent): ViewerPointerPoint {
+    return { clientX: event.clientX, clientY: event.clientY };
+  }
+
+  function captureViewportPointer(pointerId: number): void {
+    try {
+      viewportElement.setPointerCapture(pointerId);
+    } catch {
+      // Pointer capture can fail when the browser has already cancelled the contact.
+    }
+  }
+
+  function releaseViewportPointer(pointerId: number): void {
+    try {
+      if (viewportElement.hasPointerCapture(pointerId)) {
+        viewportElement.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // The pointer may already have been released by the browser.
+    }
+  }
+
+  function startPointerPan(pointerId: number, point: ViewerPointerPoint): void {
+    activePointer = pointerId;
+    pointerStartX = point.clientX;
+    pointerStartY = point.clientY;
+    pointerStartPanX = panX;
+    pointerStartPanY = panY;
+    pointerStartYaw = perspectiveYaw;
+    pointerStartPitch = perspectivePitch;
+  }
+
+  function applyPointerPan(point: ViewerPointerPoint): void {
+    if (perspectiveMode && timeline) {
+      const radiansPerPixel =
+        (perspectiveFov * Math.PI) / 180 / Math.max(1, sceneHeight);
+      const center = clampPerspectiveCenter(
+        pointerStartYaw + (point.clientX - pointerStartX) * radiansPerPixel,
+        pointerStartPitch + (point.clientY - pointerStartY) * radiansPerPixel,
+        timeline.manifest.panorama_extent,
+      );
+      perspectiveYaw = center.yaw;
+      perspectivePitch = center.pitch;
+      return;
+    }
+    panX = pointerStartPanX + point.clientX - pointerStartX;
+    panY = pointerStartPanY + point.clientY - pointerStartY;
+    clampPan();
+  }
+
+  function beginPinchGesture(): void {
+    const pointerIds = [...touchPointers.keys()].slice(0, 2);
+    if (pointerIds.length < 2) {
+      return;
+    }
+    const first = touchPointers.get(pointerIds[0]);
+    const second = touchPointers.get(pointerIds[1]);
+    if (!first || !second) {
+      return;
+    }
+    pinchPointerIds = [pointerIds[0], pointerIds[1]];
+    pinchStartDistance = Math.max(1, pointerDistance(first, second));
+    pinchStartMidpoint = pointerMidpoint(first, second);
+    pinchStartZoom = zoom;
+    pinchStartPanX = panX;
+    pinchStartPanY = panY;
+    pinchStartFov = perspectiveFov;
+    activePointer = null;
+    touchPanStarted = true;
+    touchTapCandidate = null;
+    previousTouchTap = null;
+    if (perspectiveMode && autoCameraEnabled) {
+      disableAutoCameraForManualControl();
+    }
+  }
+
+  function updatePinchGesture(): void {
+    if (!pinchPointerIds) {
+      return;
+    }
+    const first = touchPointers.get(pinchPointerIds[0]);
+    const second = touchPointers.get(pinchPointerIds[1]);
+    if (!first || !second) {
+      return;
+    }
+    const scale = pointerDistance(first, second) / pinchStartDistance;
+    if (!Number.isFinite(scale) || scale <= 0) {
+      return;
+    }
+    if (perspectiveMode) {
+      perspectiveFov = clampFov(pinchStartFov / scale);
+      defaultPerspectiveFov = perspectiveFov;
+      return;
+    }
+
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom * scale));
+    const ratio = nextZoom / pinchStartZoom;
+    const midpoint = pointerMidpoint(first, second);
+    const rect = viewportElement.getBoundingClientRect();
+    const startMidpointX = pinchStartMidpoint.clientX - rect.left - rect.width / 2;
+    const startMidpointY = pinchStartMidpoint.clientY - rect.top - rect.height / 2;
+    const midpointX = midpoint.clientX - rect.left - rect.width / 2;
+    const midpointY = midpoint.clientY - rect.top - rect.height / 2;
+    panX = midpointX - (startMidpointX - pinchStartPanX) * ratio;
+    panY = midpointY - (startMidpointY - pinchStartPanY) * ratio;
+    zoom = nextZoom;
+    clampPan();
+  }
+
+  function registerTouchTap(point: ViewerPointerPoint, timestamp: number): void {
+    const rect = viewportElement.getBoundingClientRect();
+    if (rect.width <= 0) {
+      previousTouchTap = null;
+      return;
+    }
+    const currentTap: ViewportTouchTap = {
+      ...point,
+      timestamp,
+      side: point.clientX < rect.left + rect.width / 2 ? 'left' : 'right',
+    };
+    const seekSeconds = doubleTapSeekSeconds(previousTouchTap, currentTap);
+    if (seekSeconds === null) {
+      previousTouchTap = currentTap;
+      return;
+    }
+    previousTouchTap = null;
+    skipBy(seekSeconds);
+  }
+
+  function resetPointerGestures(): void {
+    const capturedPointers = new Set(touchPointers.keys());
+    if (activePointer !== null) {
+      capturedPointers.add(activePointer);
+    }
+    for (const pointerId of capturedPointers) {
+      releaseViewportPointer(pointerId);
+    }
+    touchPointers.clear();
+    touchTapCandidate = null;
+    previousTouchTap = null;
+    touchPanStarted = false;
+    pinchPointerIds = null;
+    activePointer = null;
+  }
+
   function beginPan(event: PointerEvent): void {
     if (!videoUrl || event.button !== 0) {
       return;
@@ -989,45 +1215,141 @@
       if (point) onSpatialPointPlace?.(point);
       return;
     }
+    const point = pointerPoint(event);
+    if (event.pointerType === 'touch') {
+      event.preventDefault();
+      lastTouchInteractionTimestamp = event.timeStamp;
+      touchPointers.set(event.pointerId, point);
+      captureViewportPointer(event.pointerId);
+      if (touchPointers.size === 1) {
+        startPointerPan(event.pointerId, point);
+        touchPanStarted = false;
+        touchTapCandidate = {
+          pointerId: event.pointerId,
+          timestamp: event.timeStamp,
+          start: point,
+        };
+      } else {
+        touchTapCandidate = null;
+        previousTouchTap = null;
+        if (!pinchPointerIds) {
+          beginPinchGesture();
+        }
+      }
+      return;
+    }
     if (perspectiveMode && autoCameraEnabled) {
       disableAutoCameraForManualControl();
     }
-    activePointer = event.pointerId;
-    pointerStartX = event.clientX;
-    pointerStartY = event.clientY;
-    pointerStartPanX = panX;
-    pointerStartPanY = panY;
-    pointerStartYaw = perspectiveYaw;
-    pointerStartPitch = perspectivePitch;
-    viewportElement.setPointerCapture(event.pointerId);
+    startPointerPan(event.pointerId, point);
+    captureViewportPointer(event.pointerId);
   }
 
   function movePan(event: PointerEvent): void {
+    const point = pointerPoint(event);
+    if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
+      event.preventDefault();
+      lastTouchInteractionTimestamp = event.timeStamp;
+      touchPointers.set(event.pointerId, point);
+      if (pinchPointerIds) {
+        updatePinchGesture();
+        return;
+      }
+      if (activePointer !== event.pointerId) {
+        return;
+      }
+      if (!touchPanStarted) {
+        if (
+          !touchTapCandidate ||
+          pointerDistance(touchTapCandidate.start, point) < TOUCH_PAN_THRESHOLD_PX
+        ) {
+          return;
+        }
+        touchPanStarted = true;
+        touchTapCandidate = null;
+        previousTouchTap = null;
+        if (perspectiveMode && autoCameraEnabled) {
+          disableAutoCameraForManualControl();
+        }
+      }
+      applyPointerPan(point);
+      return;
+    }
     if (activePointer !== event.pointerId) {
       return;
     }
-    if (perspectiveMode && timeline) {
-      const radiansPerPixel =
-        (perspectiveFov * Math.PI) / 180 / Math.max(1, sceneHeight);
-      const center = clampPerspectiveCenter(
-        pointerStartYaw + (event.clientX - pointerStartX) * radiansPerPixel,
-        pointerStartPitch + (event.clientY - pointerStartY) * radiansPerPixel,
-        timeline.manifest.panorama_extent,
-      );
-      perspectiveYaw = center.yaw;
-      perspectivePitch = center.pitch;
-      return;
-    }
-    panX = pointerStartPanX + event.clientX - pointerStartX;
-    panY = pointerStartPanY + event.clientY - pointerStartY;
-    clampPan();
+    applyPointerPan(point);
   }
 
-  function endPan(event: PointerEvent): void {
+  function endPan(event: PointerEvent, cancelled = false): void {
+    if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
+      event.preventDefault();
+      lastTouchInteractionTimestamp = event.timeStamp;
+      const point = pointerPoint(event);
+      touchPointers.set(event.pointerId, point);
+      const endedPinchPointer = pinchPointerIds?.includes(event.pointerId) ?? false;
+      touchPointers.delete(event.pointerId);
+      releaseViewportPointer(event.pointerId);
+
+      if (pinchPointerIds) {
+        if (!endedPinchPointer) {
+          return;
+        }
+        pinchPointerIds = null;
+        touchTapCandidate = null;
+        previousTouchTap = null;
+        if (touchPointers.size >= 2) {
+          beginPinchGesture();
+        } else if (touchPointers.size === 1) {
+          const [remainingPointerId, remainingPoint] = [...touchPointers.entries()][0];
+          startPointerPan(remainingPointerId, remainingPoint);
+          touchPanStarted = true;
+        } else {
+          activePointer = null;
+          touchPanStarted = false;
+        }
+        return;
+      }
+
+      if (activePointer === event.pointerId) {
+        const tapCandidate = touchTapCandidate;
+        const tapDuration = tapCandidate
+          ? event.timeStamp - tapCandidate.timestamp
+          : Number.POSITIVE_INFINITY;
+        const isTap =
+          !cancelled &&
+          !touchPanStarted &&
+          tapCandidate?.pointerId === event.pointerId &&
+          tapDuration >= 0 &&
+          tapDuration <= TOUCH_TAP_MAX_DURATION_MS &&
+          pointerDistance(tapCandidate.start, point) < TOUCH_PAN_THRESHOLD_PX;
+        activePointer = null;
+        touchTapCandidate = null;
+        touchPanStarted = false;
+        if (isTap) {
+          registerTouchTap(point, event.timeStamp);
+        } else {
+          previousTouchTap = null;
+        }
+      }
+      return;
+    }
     if (activePointer === event.pointerId) {
       activePointer = null;
-      viewportElement.releasePointerCapture(event.pointerId);
+      releaseViewportPointer(event.pointerId);
     }
+  }
+
+  function handleViewportDoubleClick(event: MouseEvent): void {
+    const elapsedSinceTouch = event.timeStamp - lastTouchInteractionTimestamp;
+    if (
+      elapsedSinceTouch >= 0 &&
+      elapsedSinceTouch <= SYNTHETIC_DOUBLE_CLICK_WINDOW_MS
+    ) {
+      event.preventDefault();
+      return;
+    }
+    resetView();
   }
 
   function spatialPointAtClient(clientX: number, clientY: number): UVSViewerSpatialPoint | null {
@@ -1441,33 +1763,42 @@
   }
 
   function setPerspectiveMode(enabled: boolean): void {
+    resetPointerGestures();
     perspectiveMode = enabled && Boolean(videoUrl && timeline);
     if (!perspectiveMode) {
       orientationControlsOpen = false;
       autoControlsOpen = false;
       autoCameraEnabled = false;
     }
-    activePointer = null;
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
-    if (target?.matches('input, button')) {
+    if (
+      event.repeat ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      !videoUrl ||
+      target?.matches('input, select, textarea') ||
+      target?.isContentEditable ||
+      target?.closest('[contenteditable="true"]')
+    ) {
       return;
     }
-    if (event.key === '+' || event.key === '=') {
+    const zoomDirection = zoomDirectionForKey(event.key);
+    if (zoomDirection) {
+      event.preventDefault();
+      // Keep X available to the statistics recorder whenever this viewer is not focused.
+      event.stopPropagation();
       if (perspectiveMode) {
-        changeFov(0.8);
+        changeFov(zoomDirection === 'in' ? 0.8 : 1.25);
       } else {
-        changeZoom(1.25);
-      }
-    } else if (event.key === '-') {
-      if (perspectiveMode) {
-        changeFov(1.25);
-      } else {
-        changeZoom(0.8);
+        changeZoom(zoomDirection === 'in' ? 1.25 : 0.8);
       }
     } else if (event.key === '0') {
+      event.preventDefault();
+      event.stopPropagation();
       resetView();
     }
   }
@@ -1490,6 +1821,9 @@
 
     const key = event.key.toLowerCase();
     if (event.code === 'Space') {
+      if (target?.matches('button')) {
+        return;
+      }
       event.preventDefault();
       void togglePlayback();
     } else if (key === 'q') {
@@ -1504,6 +1838,9 @@
     } else if (key === 'd') {
       event.preventDefault();
       skipBy(1);
+    } else if (key === 'r') {
+      event.preventDefault();
+      setAutoCameraMode(!autoCameraEnabled);
     }
   }
 
@@ -1771,16 +2108,19 @@
     <div
       bind:this={viewportElement}
       class="viewport"
-      class:panning={activePointer !== null}
+      class:panning={
+        pinchPointerIds !== null ||
+        (activePointer !== null && (touchPointers.size === 0 || touchPanStarted))
+      }
       class:spatial-placement={spatialPlacementActive}
       role="region"
-      aria-label="Panorama video viewport"
+      aria-label="Panorama video viewport. On touchscreens, pinch to zoom or double tap the left or right side to seek five seconds."
       onpointerdown={beginPan}
       onpointermove={movePan}
       onpointerup={endPan}
-      onpointercancel={endPan}
+      onpointercancel={(event) => endPan(event, true)}
       onwheel={handleWheel}
-      ondblclick={resetView}
+      ondblclick={handleViewportDoubleClick}
     >
       {#if videoUrl}
         <div
@@ -2164,7 +2504,22 @@
     </button>
 
     <button
-      class="icon-button compact"
+      class="icon-button"
+      type="button"
+      aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+      title={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'}
+      disabled={!fullscreenSupported}
+      onclick={() => void toggleFullscreen()}
+    >
+      {#if fullscreenActive}
+        <Minimize2 size={18} aria-hidden="true" />
+      {:else}
+        <Maximize2 size={18} aria-hidden="true" />
+      {/if}
+    </button>
+
+    <button
+      class="icon-button compact mobile-skip-control"
       type="button"
       aria-label="Back 5 seconds"
       title="Back 5 seconds"
@@ -2175,7 +2530,7 @@
     </button>
 
     <button
-      class="icon-button compact"
+      class="icon-button compact mobile-skip-control"
       type="button"
       aria-label="Forward 5 seconds"
       title="Forward 5 seconds"
@@ -2247,36 +2602,19 @@
 
     <div class="transport-divider"></div>
 
-    <div class="auto-camera-transport-controls" aria-label="Automatic camera playback controls">
-      <button
-        class="icon-button"
-        class:active={autoCameraEnabled}
-        type="button"
-        aria-label={autoCameraEnabled ? 'Turn off automatic camera' : 'Turn on automatic camera'}
-        aria-pressed={autoCameraEnabled}
-        title={autoCameraEnabled ? 'Turn off automatic camera' : 'Turn on automatic camera'}
-        disabled={!hasAutoCameraData || !videoUrl}
-        onclick={() => setAutoCameraMode(!autoCameraEnabled)}
-      >
-        <ScanSearch size={17} aria-hidden="true" />
-      </button>
-
-      <button
-        class="icon-button auto-camera-on-play"
-        class:active={autoCameraOnPlay}
-        type="button"
-        aria-label={autoCameraOnPlay ? 'Disable AutoCam on play' : 'Enable AutoCam on play'}
-        aria-pressed={autoCameraOnPlay}
-        title={autoCameraOnPlay
-          ? 'AutoCam will turn on when playback resumes'
-          : 'AutoCam will stay off when playback resumes'}
-        disabled={!hasAutoCameraData || !videoUrl}
-        onclick={() => (autoCameraOnPlay = !autoCameraOnPlay)}
-      >
-        <ScanSearch size={16} aria-hidden="true" />
-        <Play class="auto-camera-on-play-badge" size={9} fill="currentColor" aria-hidden="true" />
-      </button>
-    </div>
+    <button
+      class="icon-button"
+      class:active={autoCameraEnabled}
+      type="button"
+      aria-label={autoCameraEnabled ? 'Disable automatic panning' : 'Enable automatic panning'}
+      aria-pressed={autoCameraEnabled}
+      aria-keyshortcuts="R"
+      title={autoCameraEnabled ? 'Disable automatic panning (R)' : 'Enable automatic panning (R)'}
+      disabled={!hasAutoCameraData || !videoUrl}
+      onclick={() => setAutoCameraMode(!autoCameraEnabled)}
+    >
+      <ScanSearch size={17} aria-hidden="true" />
+    </button>
 
     <details class="view-options">
       <summary class="icon-button" aria-label="View options" title="View options">
@@ -2304,6 +2642,34 @@
           <input type="checkbox" bind:checked={showPlaybackMarkers} disabled={playbackMarkers.length === 0} />
           <span>Action markers</span>
         </label>
+        <p class="mobile-gesture-help">
+          Pinch to zoom. Double-tap the left or right side of the video to seek 5 seconds.
+        </p>
+        <div class="view-options-divider mobile-seek-divider" role="separator"></div>
+        <button
+          class="view-option-action mobile-seek-option"
+          type="button"
+          disabled={!videoUrl || duration <= 0}
+          onclick={(event) => {
+            skipBy(-5);
+            closeContainingMenu(event);
+          }}
+        >
+          <ChevronsLeft size={16} aria-hidden="true" />
+          <span>Back 5 seconds</span>
+        </button>
+        <button
+          class="view-option-action mobile-seek-option"
+          type="button"
+          disabled={!videoUrl || duration <= 0}
+          onclick={(event) => {
+            skipBy(5);
+            closeContainingMenu(event);
+          }}
+        >
+          <ChevronsRight size={16} aria-hidden="true" />
+          <span>Forward 5 seconds</span>
+        </button>
         <div class="view-options-divider" role="separator"></div>
         <button
           class="view-option-action"
@@ -2374,6 +2740,7 @@
           class="icon-button"
           type="button"
           aria-label="Zoom out"
+          aria-keyshortcuts="X"
           title="Zoom out"
           disabled={!videoUrl || zoom <= MIN_ZOOM}
           onclick={() => changeZoom(0.8)}
@@ -2385,6 +2752,7 @@
           class="icon-button"
           type="button"
           aria-label="Zoom in"
+          aria-keyshortcuts="W"
           title="Zoom in"
           disabled={!videoUrl || zoom >= MAX_ZOOM}
           onclick={() => changeZoom(1.25)}

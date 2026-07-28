@@ -14,6 +14,12 @@
   text-rendering: optimizeLegibility;
   letter-spacing: 0;
 
+&:fullscreen,
+&:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+}
+
 &:focus {
   outline: none;
 }
@@ -915,29 +921,6 @@ main {
   background: #393c37;
 }
 
-.auto-camera-transport-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.auto-camera-on-play {
-  position: relative;
-}
-
-.auto-camera-on-play .auto-camera-on-play-badge {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  padding: 1px;
-  border-radius: 2px;
-  background: #232620;
-}
-
-.auto-camera-on-play.active .auto-camera-on-play-badge {
-  background: #24383b;
-}
-
 .view-options,
 .shortcut-help {
   position: relative;
@@ -1011,6 +994,19 @@ main {
 .view-option-action:disabled {
   color: #6d7269;
   cursor: default;
+}
+
+.mobile-gesture-help,
+.mobile-seek-divider,
+.mobile-seek-option {
+  display: none;
+}
+
+.mobile-gesture-help {
+  margin: 3px 8px 5px;
+  color: #aeb5aa;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .shortcut-help-menu {
@@ -1132,6 +1128,64 @@ main {
     width: 42px;
   }
 
+}
+
+@media (max-width: 600px) {
+  .transport {
+    gap: 3px;
+    padding: 8px 4px;
+  }
+
+  .transport > .icon-button,
+  .transport > details > summary.icon-button {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .transport > .playback-speed-control > .playback-speed-summary {
+    flex-basis: 38px;
+    width: 38px;
+    min-width: 38px;
+  }
+
+  .transport .timecode,
+  .transport .zoom-controls {
+    display: none;
+  }
+
+  .timeline-control {
+    min-width: 48px;
+  }
+}
+
+@media (max-width: 380px) {
+  .mobile-skip-control {
+    display: none;
+  }
+
+  .mobile-seek-divider {
+    display: block;
+  }
+
+  .mobile-seek-option {
+    display: flex;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .mobile-skip-control {
+    display: none;
+  }
+
+  .mobile-gesture-help,
+  .mobile-seek-divider {
+    display: block;
+  }
+
+  .mobile-seek-option {
+    display: flex;
+  }
 }
 
 @media (max-width: 480px) {

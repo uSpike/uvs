@@ -105,7 +105,14 @@ unused middle of the gap.
 
 ## Viewer
 
-Drag to pan and use the mouse wheel or transport controls to zoom.
+Drag to pan and use the mouse wheel or transport controls to zoom. With the
+viewer focused, `W` zooms in, `X` zooms out, and `0` resets the view. `R`
+toggles automatic panning. The fullscreen control is available on desktop and
+mobile browsers that expose the Fullscreen API.
+
+On touchscreens, pinch to zoom. Double-tap the left or right half of the video
+to seek backward or forward five seconds; the matching transport buttons are
+hidden on mobile layouts.
 
 Enable **Undistort** to render the angular panorama through a rectilinear camera
 that fills the viewer while matching the source renderer's vertical-FOV convention. In
