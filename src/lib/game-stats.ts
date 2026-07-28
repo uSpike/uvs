@@ -264,7 +264,8 @@ export interface ManualPointSummary {
   defenseStrategyId: number | null;
   ourTurnovers: number;
   scoringMethod: string | null;
-  scorerPlayerId: number | null;
+  throwerPlayerId: number | null;
+  receiverPlayerId: number | null;
   ourScore: number;
   opponentScore: number;
 }
@@ -897,17 +898,32 @@ export function calculateGameStatistics(data: TrackingGameData): CalculatedGameS
       // positive-only portion of extended plus/minus.
       stats.extendedPlusMinus = paper.goals + paper.assists + paper.blocks;
     }
-    const scorerGoals = new Map<number, number>();
+    const throwerAssists = new Map<number, number>();
+    const receiverGoals = new Map<number, number>();
     for (const point of data.manualPoints) {
-      if (point.scorerPlayerId !== null) {
-        scorerGoals.set(point.scorerPlayerId, (scorerGoals.get(point.scorerPlayerId) ?? 0) + 1);
+      if (point.throwerPlayerId !== null) {
+        throwerAssists.set(
+          point.throwerPlayerId,
+          (throwerAssists.get(point.throwerPlayerId) ?? 0) + 1,
+        );
+      }
+      if (point.receiverPlayerId !== null) {
+        receiverGoals.set(
+          point.receiverPlayerId,
+          (receiverGoals.get(point.receiverPlayerId) ?? 0) + 1,
+        );
       }
     }
     for (const paper of data.manualPlayerStatistics) {
-      const detailedGoals = scorerGoals.get(paper.playerId) ?? 0;
+      const detailedGoals = receiverGoals.get(paper.playerId) ?? 0;
       if (detailedGoals !== paper.goals) {
         const name = players.get(paper.playerId)?.playerName ?? 'Unknown player';
         warnings.push(`${name}'s paper total has ${paper.goals} goals, but the point summaries credit ${detailedGoals}.`);
+      }
+      const detailedAssists = throwerAssists.get(paper.playerId) ?? 0;
+      if (detailedAssists !== paper.assists) {
+        const name = players.get(paper.playerId)?.playerName ?? 'Unknown player';
+        warnings.push(`${name}'s paper total has ${paper.assists} assists, but the point summaries credit ${detailedAssists}.`);
       }
     }
   }

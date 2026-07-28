@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const DATABASE_VERSION = 16;
+const DATABASE_VERSION = 18;
 
 let applicationDatabase: Database.Database | null = null;
 
@@ -640,6 +640,59 @@ export function migrateDatabase(database: Database.Database): void {
         DROP TABLE game_event_annotations_v15;
         CREATE INDEX game_event_annotations_event_id_idx
           ON game_event_annotations(event_id, sort_order, id);
+      `);
+    }
+
+    if (currentVersion < 17) {
+      const manualPointColumns = database.pragma(
+        'table_info(manual_game_points)',
+      ) as Array<{ name: string }>;
+      const hasScorerPlayerId = manualPointColumns.some(
+        (column) => column.name === 'scorer_player_id',
+      );
+      const hasReceiverPlayerId = manualPointColumns.some(
+        (column) => column.name === 'receiver_player_id',
+      );
+      if (hasScorerPlayerId && !hasReceiverPlayerId) {
+        database.exec(`
+          ALTER TABLE manual_game_points
+            RENAME COLUMN scorer_player_id TO receiver_player_id;
+        `);
+      }
+      if (!manualPointColumns.some((column) => column.name === 'thrower_player_id')) {
+        database.exec(`
+          ALTER TABLE manual_game_points ADD COLUMN thrower_player_id INTEGER
+            REFERENCES players(id) ON DELETE RESTRICT;
+        `);
+      }
+    }
+
+    if (currentVersion < 18) {
+      const gameColumns = database.pragma('table_info(games)') as Array<{ name: string }>;
+      if (!gameColumns.some((column) => column.name === 'sort_order')) {
+        database.exec(`
+          ALTER TABLE games ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0
+            CHECK (sort_order >= 0);
+
+          WITH ranked_games AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY tournament_id
+                     ORDER BY COALESCE(played_at, created_at), id
+                   ) - 1 AS sort_order
+              FROM games
+          )
+          UPDATE games
+             SET sort_order = (
+               SELECT ranked_games.sort_order
+                 FROM ranked_games
+                WHERE ranked_games.id = games.id
+             );
+        `);
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS games_tournament_id_sort_order_idx
+          ON games(tournament_id, sort_order, id);
       `);
     }
 

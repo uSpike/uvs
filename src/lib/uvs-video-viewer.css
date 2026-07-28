@@ -996,19 +996,6 @@ main {
   cursor: default;
 }
 
-.mobile-gesture-help,
-.mobile-seek-divider,
-.mobile-seek-option {
-  display: none;
-}
-
-.mobile-gesture-help {
-  margin: 3px 8px 5px;
-  color: #aeb5aa;
-  font-size: 10px;
-  line-height: 1.4;
-}
-
 .shortcut-help-menu {
   position: absolute;
   right: 0;
@@ -1159,32 +1146,33 @@ main {
   }
 }
 
-@media (max-width: 380px) {
-  .mobile-skip-control {
-    display: none;
-  }
-
-  .mobile-seek-divider {
-    display: block;
-  }
-
-  .mobile-seek-option {
-    display: flex;
-  }
-}
-
 @media (hover: none) and (pointer: coarse) {
   .mobile-skip-control {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .mobile-skip-control:focus-visible {
+    position: static;
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .view-options,
+  .shortcut-help {
     display: none;
-  }
-
-  .mobile-gesture-help,
-  .mobile-seek-divider {
-    display: block;
-  }
-
-  .mobile-seek-option {
-    display: flex;
   }
 }
 

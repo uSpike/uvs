@@ -35,7 +35,7 @@ import type {
   ExportedGameEvent,
   ExportedPlayerReference,
   ExportedStrategyReference,
-  GameStatisticsExportV1,
+  GameStatisticsExport,
 } from '$lib/game-stat-transfer';
 import { parseGameEventPayload, parseGameEventType } from '$lib/game-events';
 import { parseOptionalMatchupRole, type MatchupRole } from '$lib/matchup';
@@ -153,7 +153,8 @@ interface ManualPointRow {
   defense_strategy_id: number | null;
   our_turnovers: number;
   scoring_method: string | null;
-  scorer_player_id: number | null;
+  thrower_player_id: number | null;
+  receiver_player_id: number | null;
   our_score: number;
   opponent_score: number;
 }
@@ -180,7 +181,7 @@ export class GameTrackingRepository {
   /** Load every game in a tournament for aggregate statistics. */
   listTournamentGameData(tournamentId: number): TrackingGameData[] {
     const tokens = this.database
-      .prepare('SELECT token FROM games WHERE tournament_id = ? ORDER BY played_at, id')
+      .prepare('SELECT token FROM games WHERE tournament_id = ? ORDER BY sort_order, id')
       .all(tournamentId) as Array<{ token: string }>;
     return tokens
       .map((row) => this.getGameData(row.token))
@@ -208,7 +209,7 @@ export class GameTrackingRepository {
    * Source roster IDs are resolved to this game's event roster by matching ID/name first,
    * then by a unique case-insensitive name.
    */
-  importStatistics(token: string, exported: GameStatisticsExportV1): GameTrackingSnapshot {
+  importStatistics(token: string, exported: GameStatisticsExport): GameTrackingSnapshot {
     const game = this.requireGame(token);
     const destination = this.getGameData(token);
     if (!destination) throw new Error('Game not found.');
@@ -315,7 +316,8 @@ export class GameTrackingRepository {
       defenseStrategyId: references.optionalStrategy(point.defenseStrategyId, 'defense'),
       ourTurnovers: point.ourTurnovers,
       scoringMethod: point.scoringMethod,
-      scorerPlayerId: references.optionalPlayer(point.scorerPlayerId),
+      throwerPlayerId: references.optionalPlayer(point.throwerPlayerId),
+      receiverPlayerId: references.optionalPlayer(point.receiverPlayerId),
       ourScore: point.ourScore,
       opponentScore: point.opponentScore,
     }));
@@ -751,17 +753,18 @@ export class GameTrackingRepository {
       ).length;
       if (availableLines !== lineIds.length) throw new Error('Every paper point line must belong to this event.');
     }
-    const scorerIds = uniqueIds(
-      input.points
-        .map((point) => point.scorerPlayerId)
-        .filter((playerId): playerId is number => playerId !== null),
-      'Paper point scorer',
+    const goalParticipantIds = uniqueIds(
+      input.points.flatMap((point) =>
+        [point.throwerPlayerId, point.receiverPlayerId]
+          .filter((playerId): playerId is number => playerId !== null),
+      ),
+      'Paper goal participant',
     );
-    this.requireTournamentPlayers(game.id, scorerIds);
-    const scorerSet = new Set(scorerIds);
+    this.requireTournamentPlayers(game.id, goalParticipantIds);
+    const goalParticipantSet = new Set(goalParticipantIds);
     const storedPlayerStatistics = playerStatistics.filter(
       (stats) =>
-        scorerSet.has(stats.playerId) ||
+        goalParticipantSet.has(stats.playerId) ||
         stats.pointsPlayed > 0 ||
         stats.hockeyAssists > 0 ||
         stats.assists > 0 ||
@@ -786,8 +789,26 @@ export class GameTrackingRepository {
       if (!((ourIncrease === 1 && opponentIncrease === 0) || (ourIncrease === 0 && opponentIncrease === 1))) {
         throw new Error(`Paper point ${index + 1} score must add exactly one goal to the previous score.`);
       }
-      if (opponentIncrease === 1 && (point.scorerPlayerId !== null || optionalPaperText(point.scoringMethod, 'Scoring method') !== null)) {
-        throw new Error(`Paper point ${index + 1} can only name our scorer and scoring method when our team scored.`);
+      if (
+        opponentIncrease === 1 &&
+        (
+          point.throwerPlayerId !== null ||
+          point.receiverPlayerId !== null ||
+          optionalPaperText(point.scoringMethod, 'Scoring method') !== null
+        )
+      ) {
+        throw new Error(
+          `Paper point ${index + 1} can only name our thrower, receiver, and scoring method when our team scored.`,
+        );
+      }
+      if (
+        ourIncrease === 1 &&
+        point.throwerPlayerId !== null &&
+        point.throwerPlayerId === point.receiverPlayerId
+      ) {
+        throw new Error(
+          `Paper point ${index + 1} thrower and receiver must be different players.`,
+        );
       }
       previousOurScore = ourScore;
       previousOpponentScore = opponentScore;
@@ -815,7 +836,8 @@ export class GameTrackingRepository {
         scoringMethod: ourIncrease === 1
           ? optionalPaperText(point.scoringMethod, 'Scoring method')
           : null,
-        scorerPlayerId: ourIncrease === 1 ? point.scorerPlayerId : null,
+        throwerPlayerId: ourIncrease === 1 ? point.throwerPlayerId : null,
+        receiverPlayerId: ourIncrease === 1 ? point.receiverPlayerId : null,
         ourScore,
         opponentScore,
       };
@@ -844,8 +866,8 @@ export class GameTrackingRepository {
         `INSERT INTO manual_game_points (
            game_id, sequence_number, line_id, starting_possession, initial_defense_type,
            offense_strategy_id, defense_strategy_id, our_turnovers, scoring_method,
-           scorer_player_id, our_score, opponent_score
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           thrower_player_id, receiver_player_id, our_score, opponent_score
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const point of points) {
         insertPoint.run(
@@ -858,7 +880,8 @@ export class GameTrackingRepository {
           point.defenseStrategyId,
           point.ourTurnovers,
           point.scoringMethod,
-          point.scorerPlayerId,
+          point.throwerPlayerId,
+          point.receiverPlayerId,
           point.ourScore,
           point.opponentScore,
         );
@@ -1033,7 +1056,8 @@ export class GameTrackingRepository {
         .prepare(
           `SELECT id, sequence_number, line_id, starting_possession, initial_defense_type,
                   offense_strategy_id, defense_strategy_id,
-                  our_turnovers, scoring_method, scorer_player_id, our_score, opponent_score
+                  our_turnovers, scoring_method, thrower_player_id, receiver_player_id,
+                  our_score, opponent_score
              FROM manual_game_points
             WHERE game_id = ? ORDER BY sequence_number, id`,
         )
@@ -1048,7 +1072,8 @@ export class GameTrackingRepository {
       defenseStrategyId: point.defense_strategy_id,
       ourTurnovers: point.our_turnovers,
       scoringMethod: point.scoring_method,
-      scorerPlayerId: point.scorer_player_id,
+      throwerPlayerId: point.thrower_player_id,
+      receiverPlayerId: point.receiver_player_id,
       ourScore: point.our_score,
       opponentScore: point.opponent_score,
     }));
@@ -1454,7 +1479,7 @@ class StatisticsReferenceResolver {
   private readonly strategyCache = new Map<number, number>();
 
   constructor(
-    exported: GameStatisticsExportV1,
+    exported: GameStatisticsExport,
     private readonly destination: TrackingGameData,
   ) {
     this.sourcePlayers = new Map(

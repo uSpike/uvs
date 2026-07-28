@@ -41,8 +41,6 @@ describe('UVSVideoViewer', () => {
     expect(result.body).toContain('Back 5 seconds');
     expect(result.body).toContain('Forward 5 seconds');
     expect(result.body.match(/mobile-skip-control/g)).toHaveLength(2);
-    expect(result.body.match(/mobile-seek-option/g)).toHaveLength(2);
-    expect(result.body).toContain('Double-tap the left or right side of the video');
     expect(result.body).toContain('Playback speed');
     expect(result.body).toContain('timeline-point-track');
     expect(result.body).toContain('Keyboard shortcuts');

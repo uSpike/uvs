@@ -79,6 +79,22 @@ function gameFields(tournamentId: number) {
   };
 }
 
+function createPaperGame(
+  catalog: CatalogRepository,
+  tournamentId: number,
+  title: string,
+  playedAt: string | null = null,
+) {
+  return catalog.createGame({
+    ...gameFields(tournamentId),
+    title,
+    playedAt,
+    videoSource: null,
+    metadataJsonl: null,
+    metadata: null,
+  });
+}
+
 describe('CatalogRepository', () => {
   it('creates paper-only games without video placeholders in repository results', () => {
     const catalog = repository();
@@ -187,6 +203,83 @@ describe('CatalogRepository', () => {
     expect(catalog.getGameViewByToken(game.token)).toBeNull();
     expect(catalog.getTeamBySlug(team.slug)?.games).toHaveLength(0);
     expect(catalog.listTeams()[0].gameCount).toBe(0);
+  });
+
+  it('appends, reorders, and compacts tournament games independently of their dates', () => {
+    const catalog = repository();
+    const team = catalog.createTeam('Union', 'team-password');
+    const tournamentId = tournamentFor(team.id, 'Invite');
+    const first = createPaperGame(catalog, tournamentId, 'First entered', '2026-06-03T10:00');
+    createPaperGame(catalog, tournamentId, 'Second entered', '2026-06-01T10:00');
+    const third = createPaperGame(catalog, tournamentId, 'Third entered');
+    const titles = () =>
+      new TournamentRepository(databases.at(-1)!)
+        .getTournament(team.slug, tournamentId)!
+        .games.map((game) => game.title);
+
+    expect(titles()).toEqual(['First entered', 'Second entered', 'Third entered']);
+    catalog.moveGame(tournamentId, third.id, 'earlier');
+    expect(titles()).toEqual(['First entered', 'Third entered', 'Second entered']);
+    catalog.moveGame(tournamentId, third.id, 'earlier');
+    catalog.moveGame(tournamentId, third.id, 'earlier');
+    expect(titles()).toEqual(['Third entered', 'First entered', 'Second entered']);
+    expect(catalog.getTeamBySlug(team.slug)?.games.map((game) => game.title))
+      .toEqual(['Third entered', 'First entered', 'Second entered']);
+
+    const otherTournamentId = tournamentFor(team.id, 'Other event');
+    expect(() => catalog.moveGame(otherTournamentId, first.id, 'later'))
+      .toThrow('does not belong to this event');
+
+    expect(catalog.deleteGame(first.token)).toBe(true);
+    createPaperGame(catalog, tournamentId, 'Fourth entered', '2026-05-01T10:00');
+    expect(titles()).toEqual(['Third entered', 'Second entered', 'Fourth entered']);
+    expect(
+      databases.at(-1)!
+        .prepare(
+          `SELECT sort_order
+             FROM games
+            WHERE tournament_id = ?
+            ORDER BY sort_order, id`,
+        )
+        .all(tournamentId),
+    ).toEqual([{ sort_order: 0 }, { sort_order: 1 }, { sort_order: 2 }]);
+  });
+
+  it('appends a game when it moves to another tournament and compacts its old order', () => {
+    const catalog = repository();
+    const team = catalog.createTeam('Union', 'team-password');
+    const sourceTournamentId = tournamentFor(team.id, 'Pool play');
+    const destinationTournamentId = tournamentFor(team.id, 'Bracket play');
+    const sourceFirst = createPaperGame(catalog, sourceTournamentId, 'Pool one');
+    const moving = createPaperGame(catalog, sourceTournamentId, 'Pool two');
+    const destinationFirst = createPaperGame(catalog, destinationTournamentId, 'Bracket one');
+
+    expect(catalog.updateGame(moving.token, {
+      ...gameFields(destinationTournamentId),
+      title: moving.title,
+      videoSource: null,
+      settings: moving.settings,
+    })).toBe(true);
+
+    const tournaments = new TournamentRepository(databases.at(-1)!);
+    expect(tournaments.getTournament(team.slug, sourceTournamentId)?.games.map((game) => game.id))
+      .toEqual([sourceFirst.id]);
+    expect(
+      tournaments.getTournament(team.slug, destinationTournamentId)?.games.map((game) => game.id),
+    ).toEqual([destinationFirst.id, moving.id]);
+    expect(
+      databases.at(-1)!
+        .prepare(
+          `SELECT tournament_id, sort_order
+             FROM games
+            WHERE id IN (?, ?)
+            ORDER BY tournament_id, sort_order`,
+        )
+        .all(sourceFirst.id, moving.id),
+    ).toEqual([
+      { tournament_id: sourceTournamentId, sort_order: 0 },
+      { tournament_id: destinationTournamentId, sort_order: 1 },
+    ]);
   });
 
   it('loads and updates administrator-editable game parameters', () => {

@@ -103,6 +103,9 @@ export interface UpdateGameInput {
   metadata?: MetadataTimeline;
 }
 
+/** Relative direction used when moving a game within its tournament. */
+export type GameOrderDirection = 'earlier' | 'later';
+
 interface TeamRow {
   id: number;
   name: string;
@@ -229,31 +232,36 @@ export class CatalogRepository {
 
     const token = randomBytes(18).toString('base64url');
     const settings = defaultGameViewerSettings(input.metadata);
-    const result = this.database
-      .prepare(
-        `INSERT INTO games (
-           team_id, tournament_id, token, title, opponent_name, played_at,
-           player_count, initial_our_score, initial_opponent_score,
-           video_source, metadata_jsonl, metadata_json, settings_json, has_video
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        tournament.team_id,
-        tournament.id,
-        token,
-        title,
-        opponentName,
-        playedAt,
-        playerCount,
-        initialOurScore,
-        initialOpponentScore,
-        videoSource,
-        input.metadataJsonl ?? '',
-        JSON.stringify(input.metadata ?? {}),
-        JSON.stringify(settings),
-        hasVideo ? 1 : 0,
-      );
-    const gameId = Number(result.lastInsertRowid);
+    const gameId = this.database.transaction(() => {
+      const sortOrder = this.nextGameSortOrder(tournament.id);
+      const result = this.database
+        .prepare(
+          `INSERT INTO games (
+             team_id, tournament_id, token, title, opponent_name, played_at,
+             player_count, initial_our_score, initial_opponent_score,
+             video_source, metadata_jsonl, metadata_json, settings_json, has_video,
+             sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          tournament.team_id,
+          tournament.id,
+          token,
+          title,
+          opponentName,
+          playedAt,
+          playerCount,
+          initialOurScore,
+          initialOpponentScore,
+          videoSource,
+          input.metadataJsonl ?? '',
+          JSON.stringify(input.metadata ?? {}),
+          JSON.stringify(settings),
+          hasVideo ? 1 : 0,
+          sortOrder,
+        );
+      return Number(result.lastInsertRowid);
+    })();
     return this.getGameById(gameId);
   }
 
@@ -272,7 +280,12 @@ export class CatalogRepository {
       return null;
     }
     const games = this.database
-      .prepare(gameSummaryQuery('WHERE games.team_id = ? ORDER BY games.created_at DESC'))
+      .prepare(
+        gameSummaryQuery(
+          `WHERE games.team_id = ?
+           ORDER BY tournaments.starts_on, tournaments.id, games.sort_order, games.id`,
+        ),
+      )
       .all(team.id) as GameRow[];
     return { ...team, games: games.map(mapGameSummary) };
   }
@@ -382,10 +395,14 @@ export class CatalogRepository {
       .get(input.tournamentId) as { id: number; team_id: number } | undefined;
     if (!tournament) throw new Error('Selected event does not exist.');
     const existing = this.database
-      .prepare('SELECT id, tournament_id, has_video, metadata_jsonl, metadata_json FROM games WHERE token = ?')
+      .prepare(
+        `SELECT id, tournament_id, sort_order, has_video, metadata_jsonl, metadata_json
+           FROM games WHERE token = ?`,
+      )
       .get(token) as {
         id: number;
         tournament_id: number;
+        sort_order: number;
         has_video: number;
         metadata_jsonl: string;
         metadata_json: string;
@@ -435,38 +452,85 @@ export class CatalogRepository {
       throw new Error('Select metadata when adding video to a paper-only game.');
     }
 
-    const result = this.database
-      .prepare(
-        `UPDATE games
-            SET team_id = ?, tournament_id = ?, title = ?, opponent_name = ?, played_at = ?,
-                player_count = ?, initial_our_score = ?, initial_opponent_score = ?,
-                video_source = ?, metadata_jsonl = ?, metadata_json = ?, settings_json = ?,
-                has_video = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          WHERE token = ?`,
-      )
-      .run(
-        tournament.team_id,
-        tournament.id,
-        title,
-        opponentName,
-        playedAt,
-        playerCount,
-        initialOurScore,
-        initialOpponentScore,
-        videoSource ?? '',
-        metadataJsonl,
-        metadataJson,
-        JSON.stringify(settings),
-        hasVideo ? 1 : 0,
-        token,
-      );
-    return result.changes === 1;
+    return this.database.transaction(() => {
+      const movedToAnotherTournament = existing.tournament_id !== tournament.id;
+      const sortOrder = movedToAnotherTournament
+        ? this.nextGameSortOrder(tournament.id)
+        : existing.sort_order;
+      const result = this.database
+        .prepare(
+          `UPDATE games
+              SET team_id = ?, tournament_id = ?, title = ?, opponent_name = ?, played_at = ?,
+                  player_count = ?, initial_our_score = ?, initial_opponent_score = ?,
+                  video_source = ?, metadata_jsonl = ?, metadata_json = ?, settings_json = ?,
+                  has_video = ?, sort_order = ?,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE token = ?`,
+        )
+        .run(
+          tournament.team_id,
+          tournament.id,
+          title,
+          opponentName,
+          playedAt,
+          playerCount,
+          initialOurScore,
+          initialOpponentScore,
+          videoSource ?? '',
+          metadataJsonl,
+          metadataJson,
+          JSON.stringify(settings),
+          hasVideo ? 1 : 0,
+          sortOrder,
+          token,
+        );
+      if (result.changes === 1 && movedToAnotherTournament) {
+        this.compactGameOrder(existing.tournament_id);
+      }
+      return result.changes === 1;
+    })();
+  }
+
+  /** Move one game by one position within its tournament. */
+  moveGame(tournamentId: number, gameId: number, direction: GameOrderDirection): void {
+    if (!Number.isSafeInteger(tournamentId) || tournamentId <= 0) {
+      throw new Error('Select a valid event.');
+    }
+    if (!Number.isSafeInteger(gameId) || gameId <= 0) {
+      throw new Error('Select a valid game.');
+    }
+    if (direction !== 'earlier' && direction !== 'later') {
+      throw new Error('Select whether to move the game earlier or later.');
+    }
+
+    this.database.transaction(() => {
+      if (!this.database.prepare('SELECT 1 FROM tournaments WHERE id = ?').get(tournamentId)) {
+        throw new Error('Selected event does not exist.');
+      }
+      const gameIds = this.orderedGameIds(tournamentId);
+      const currentIndex = gameIds.indexOf(gameId);
+      if (currentIndex === -1) throw new Error('Selected game does not belong to this event.');
+      const destinationIndex = direction === 'earlier' ? currentIndex - 1 : currentIndex + 1;
+      if (destinationIndex < 0 || destinationIndex >= gameIds.length) return;
+      [gameIds[currentIndex], gameIds[destinationIndex]] = [
+        gameIds[destinationIndex],
+        gameIds[currentIndex],
+      ];
+      this.writeGameOrder(tournamentId, gameIds);
+    })();
   }
 
   /** Delete a game and its dependent tracking, statistics, and share-link data. */
   deleteGame(token: string): boolean {
-    const result = this.database.prepare('DELETE FROM games WHERE token = ?').run(token);
-    return result.changes === 1;
+    return this.database.transaction(() => {
+      const game = this.database
+        .prepare('SELECT tournament_id FROM games WHERE token = ?')
+        .get(token) as { tournament_id: number } | undefined;
+      if (!game) return false;
+      const result = this.database.prepare('DELETE FROM games WHERE token = ?').run(token);
+      if (result.changes === 1) this.compactGameOrder(game.tournament_id);
+      return result.changes === 1;
+    })();
   }
 
   /** Restore viewer settings from metadata calibration and application defaults. */
@@ -491,6 +555,37 @@ export class CatalogRepository {
       throw new Error('Created game could not be loaded.');
     }
     return mapGameRecord(row);
+  }
+
+  private nextGameSortOrder(tournamentId: number): number {
+    return (
+      this.database
+        .prepare(
+          'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM games WHERE tournament_id = ?',
+        )
+        .get(tournamentId) as { next: number }
+    ).next;
+  }
+
+  private orderedGameIds(tournamentId: number): number[] {
+    return (
+      this.database
+        .prepare(
+          'SELECT id FROM games WHERE tournament_id = ? ORDER BY sort_order, id',
+        )
+        .all(tournamentId) as Array<{ id: number }>
+    ).map((game) => game.id);
+  }
+
+  private compactGameOrder(tournamentId: number): void {
+    this.writeGameOrder(tournamentId, this.orderedGameIds(tournamentId));
+  }
+
+  private writeGameOrder(tournamentId: number, gameIds: number[]): void {
+    const update = this.database.prepare(
+      'UPDATE games SET sort_order = ? WHERE id = ? AND tournament_id = ?',
+    );
+    gameIds.forEach((gameId, index) => update.run(index, gameId, tournamentId));
   }
 
   private availableTeamSlug(name: string): string {

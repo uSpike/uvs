@@ -184,6 +184,40 @@ describe('TournamentRepository player and tournament deletion', () => {
     expect(tournaments.getTeamSetup('union')?.rosters[0].players).toHaveLength(1);
   });
 
+  it('protects paper goal throwers and receivers from roster removal', () => {
+    database = openDatabase(':memory:');
+    const team = new CatalogRepository(database).createTeam('Union', 'team-password');
+    const tournaments = new TournamentRepository(database);
+    const rosterId = tournaments.createSeasonRoster(team.id, '2026');
+    const throwerId = tournaments.addPlayer(rosterId, 'Alex', 'mmp');
+    const receiverId = tournaments.addPlayer(rosterId, 'Blair', 'fmp');
+    const tournamentId = tournaments.createTournament({
+      seasonRosterId: rosterId,
+      name: 'Invite',
+      startsOn: null,
+      endsOn: null,
+      playerIds: [throwerId, receiverId],
+    });
+    const lineId = tournaments.createLine(tournamentId, 'O line', [throwerId, receiverId]);
+    database.prepare(
+      `INSERT INTO games (
+         team_id, tournament_id, token, title, video_source,
+         metadata_jsonl, metadata_json, settings_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(team.id, tournamentId, 'abcdefghijklmnopqrstuvwx', 'Game', 'file:///game.mp4', '{}', '{}', '{}');
+    database.prepare(
+      `INSERT INTO manual_game_points (
+         game_id, sequence_number, line_id, starting_possession, our_turnovers,
+         thrower_player_id, receiver_player_id, our_score, opponent_score
+       ) VALUES (1, 1, ?, 'offense', 0, ?, ?, 1, 0)`,
+    ).run(lineId, throwerId, receiverId);
+
+    expect(() => tournaments.updateTournamentPlayers(tournamentId, [receiverId]))
+      .toThrow('already used in this event');
+    expect(() => tournaments.deletePlayer(throwerId)).toThrow('recorded point data');
+    expect(() => tournaments.deletePlayer(receiverId)).toThrow('recorded point data');
+  });
+
   it('deletes an unused tournament but protects one that owns a game', () => {
     database = openDatabase(':memory:');
     const team = new CatalogRepository(database).createTeam('Union', 'team-password');

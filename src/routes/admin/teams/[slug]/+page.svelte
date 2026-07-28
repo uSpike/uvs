@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { resolve } from '$app/paths';
-  import { ArrowLeft, CalendarDays, ExternalLink, FileJson, KeyRound, Pencil, Plus, Save, Trash2, Users, X } from '@lucide/svelte';
+  import { ArrowDown, ArrowLeft, ArrowUp, CalendarDays, ExternalLink, FileJson, KeyRound, Pencil, Plus, Save, Trash2, Users, X } from '@lucide/svelte';
   import { tick } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
 
@@ -619,8 +619,8 @@
             {#if tournament.games.length === 0}
               <p class="empty-copy">No games in this event.</p>
             {:else}
-              <ul class="game-link-list">
-                {#each tournament.games as game}
+              <ol class="game-link-list">
+                {#each tournament.games as game, index}
                   <li>
                     <a class="game-admin-link" href={resolve(`/admin/games/${game.token}`)}>
                       <span>{game.title}</span>
@@ -629,6 +629,34 @@
                       </small>
                       <ExternalLink size={14} aria-hidden="true" />
                     </a>
+                    <form
+                      class="game-order-form"
+                      aria-label={`Reorder ${game.title}`}
+                      method="POST"
+                      action={`?/moveGame&season=${roster.id}&section=events&tournament=${tournament.id}`}
+                      use:enhance={saveAttendanceInPlace()}
+                    >
+                      <input type="hidden" name="tournamentId" value={tournament.id} />
+                      <input type="hidden" name="gameId" value={game.id} />
+                      <button
+                        class="game-order-command"
+                        type="submit"
+                        name="direction"
+                        value="earlier"
+                        disabled={index === 0}
+                        aria-label={`Move ${game.title} earlier`}
+                        title="Move earlier"
+                      ><ArrowUp size={13} aria-hidden="true" /></button>
+                      <button
+                        class="game-order-command"
+                        type="submit"
+                        name="direction"
+                        value="later"
+                        disabled={index === tournament.games.length - 1}
+                        aria-label={`Move ${game.title} later`}
+                        title="Move later"
+                      ><ArrowDown size={13} aria-hidden="true" /></button>
+                    </form>
                     <form
                       class="game-delete-form"
                       method="POST"
@@ -645,7 +673,7 @@
                     </form>
                   </li>
                 {/each}
-              </ul>
+              </ol>
             {/if}
 
             <details
@@ -1573,7 +1601,7 @@
 
   .game-link-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
     margin: 0;
     padding: 0;
@@ -1582,7 +1610,7 @@
 
   .game-link-list li {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 5px;
     min-width: 0;
   }
@@ -1607,6 +1635,36 @@
     grid-row: 1 / span 2;
     align-self: center;
     color: #087f9b;
+  }
+
+  .game-order-form {
+    display: grid;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    margin: 0;
+  }
+
+  .game-order-command {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    padding: 0;
+    border: 1px solid #b9ced3;
+    border-radius: 3px;
+    color: #176e80;
+    background: #f8fcfd;
+  }
+
+  .game-order-command:hover:not(:disabled) {
+    border-color: #80bdc8;
+    background: #e8f5f7;
+  }
+
+  .game-order-command:disabled {
+    color: #9baaa7;
+    background: #edf2f1;
+    cursor: not-allowed;
+    opacity: .55;
   }
 
   .game-delete-form { display: flex; margin: 0; }

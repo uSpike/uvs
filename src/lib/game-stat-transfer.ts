@@ -17,7 +17,7 @@ import type {
 export const GAME_STATISTICS_EXPORT_FORMAT = 'uvs-game-statistics';
 
 /** Current schema version for UVS game-statistics files. */
-export const GAME_STATISTICS_EXPORT_VERSION = 1;
+export const GAME_STATISTICS_EXPORT_VERSION = 2;
 
 /** Maximum accepted UTF-8 JSON file size for a game-statistics import. */
 export const MAX_GAME_STATISTICS_EXPORT_BYTES = 25_000_000;
@@ -104,13 +104,14 @@ export interface ExportedManualPoint {
   defenseStrategyId: number | null;
   ourTurnovers: number;
   scoringMethod: string | null;
-  scorerPlayerId: number | null;
+  throwerPlayerId: number | null;
+  receiverPlayerId: number | null;
   ourScore: number;
   opponentScore: number;
 }
 
-/** Version-one portable backup of all statistics attached to one game. */
-export interface GameStatisticsExportV1 {
+/** Current portable backup of all statistics attached to one game. */
+export interface GameStatisticsExport {
   format: typeof GAME_STATISTICS_EXPORT_FORMAT;
   version: typeof GAME_STATISTICS_EXPORT_VERSION;
   exportedAt: string;
@@ -141,11 +142,14 @@ export interface GameStatisticsExportV1 {
   };
 }
 
+/** Version-two portable backup of all statistics attached to one game. */
+export type GameStatisticsExportV2 = GameStatisticsExport;
+
 /** Build a portable, calculated-field-free statistics backup from persisted game data. */
 export function createGameStatisticsExport(
   data: TrackingGameData,
   exportedAt = new Date().toISOString(),
-): GameStatisticsExportV1 {
+): GameStatisticsExport {
   return {
     format: GAME_STATISTICS_EXPORT_FORMAT,
     version: GAME_STATISTICS_EXPORT_VERSION,
@@ -210,7 +214,8 @@ export function createGameStatisticsExport(
         defenseStrategyId: point.defenseStrategyId,
         ourTurnovers: point.ourTurnovers,
         scoringMethod: point.scoringMethod,
-        scorerPlayerId: point.scorerPlayerId,
+        throwerPlayerId: point.throwerPlayerId,
+        receiverPlayerId: point.receiverPlayerId,
         ourScore: point.ourScore,
         opponentScore: point.opponentScore,
       })),
@@ -218,15 +223,16 @@ export function createGameStatisticsExport(
   };
 }
 
-/** Parse and validate an untrusted version-one UVS game-statistics file. */
-export function parseGameStatisticsExport(value: unknown): GameStatisticsExportV1 {
+/** Parse and normalize an untrusted supported UVS game-statistics file. */
+export function parseGameStatisticsExport(value: unknown): GameStatisticsExport {
   const root = object(value, 'Statistics file');
   if (root.format !== GAME_STATISTICS_EXPORT_FORMAT) {
     throw new Error('Select an Ultimate Video Stats game-statistics JSON file.');
   }
-  if (root.version !== GAME_STATISTICS_EXPORT_VERSION) {
+  if (root.version !== 1 && root.version !== GAME_STATISTICS_EXPORT_VERSION) {
     throw new Error(`Statistics file version ${String(root.version)} is not supported.`);
   }
+  const sourceVersion = root.version;
   const sourceGame = object(root.sourceGame, 'Source game');
   const baseline = object(root.baseline, 'Score baseline');
   const references = object(root.references, 'References');
@@ -335,7 +341,7 @@ export function parseGameStatisticsExport(value: unknown): GameStatisticsExportV
         };
       }),
       manualPoints: limitedArray(statistics.manualPoints, 2_000, 'Paper points')
-        .map((item, index) => parseManualPoint(item, index)),
+        .map((item, index) => parseManualPoint(item, index, sourceVersion)),
     },
   };
 }
@@ -419,7 +425,11 @@ function parseEvent(value: unknown, label: string): ExportedGameEvent {
   };
 }
 
-function parseManualPoint(value: unknown, index: number): ExportedManualPoint {
+function parseManualPoint(
+  value: unknown,
+  index: number,
+  sourceVersion: 1 | typeof GAME_STATISTICS_EXPORT_VERSION,
+): ExportedManualPoint {
   const label = `Paper point ${index + 1}`;
   const point = object(value, label);
   return {
@@ -431,7 +441,12 @@ function parseManualPoint(value: unknown, index: number): ExportedManualPoint {
     defenseStrategyId: optionalPositiveInteger(point.defenseStrategyId, `${label} defense`),
     ourTurnovers: count(point.ourTurnovers, `${label} turnovers`),
     scoringMethod: optionalText(point.scoringMethod, 80, `${label} scoring method`),
-    scorerPlayerId: optionalPositiveInteger(point.scorerPlayerId, `${label} scorer`),
+    throwerPlayerId: sourceVersion === 1
+      ? null
+      : optionalPositiveInteger(point.throwerPlayerId, `${label} thrower`),
+    receiverPlayerId: sourceVersion === 1
+      ? optionalPositiveInteger(point.scorerPlayerId, `${label} scorer`)
+      : optionalPositiveInteger(point.receiverPlayerId, `${label} receiver`),
     ourScore: count(point.ourScore, `${label} team score`, 999),
     opponentScore: count(point.opponentScore, `${label} opponent score`, 999),
   };

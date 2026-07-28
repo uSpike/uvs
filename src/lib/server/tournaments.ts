@@ -355,14 +355,14 @@ export class TournamentRepository {
           UNION ALL
          SELECT 1
            FROM manual_game_points
-          WHERE scorer_player_id = ?
+          WHERE receiver_player_id = ? OR thrower_player_id = ?
           UNION ALL
          SELECT 1
            FROM game_highlight_players
           WHERE player_id = ?
           LIMIT 1`,
       )
-      .get(playerId, playerId, playerId, playerId, playerId, playerId);
+      .get(playerId, playerId, playerId, playerId, playerId, playerId, playerId);
     if (recordedUse) {
       throw new Error('A player used in recorded point data cannot be deleted. Rename them instead.');
     }
@@ -513,7 +513,7 @@ export class TournamentRepository {
         `SELECT id, token, title, opponent_name, played_at
            FROM games
           WHERE tournament_id = ?
-          ORDER BY COALESCE(played_at, created_at), id`,
+          ORDER BY sort_order, id`,
       )
       .all(row.id) as Array<{
         id: number;
@@ -674,9 +674,13 @@ export class TournamentRepository {
              FROM manual_player_game_statistics
             WHERE game_id = ?
            UNION ALL
-           SELECT scorer_player_id AS player_id
+           SELECT receiver_player_id AS player_id
              FROM manual_game_points
-            WHERE game_id = ? AND scorer_player_id IS NOT NULL
+            WHERE game_id = ? AND receiver_player_id IS NOT NULL
+           UNION ALL
+           SELECT thrower_player_id AS player_id
+             FROM manual_game_points
+            WHERE game_id = ? AND thrower_player_id IS NOT NULL
            UNION ALL
            SELECT game_highlight_players.player_id
              FROM game_highlight_players
@@ -684,7 +688,9 @@ export class TournamentRepository {
             WHERE game_highlights.game_id = ?
          )`,
       )
-      .all(gameId, gameId, gameId, gameId, gameId, gameId) as Array<{ player_id: number }>;
+      .all(gameId, gameId, gameId, gameId, gameId, gameId, gameId) as Array<{
+        player_id: number;
+      }>;
     return rows.map((row) => row.player_id);
   }
 }

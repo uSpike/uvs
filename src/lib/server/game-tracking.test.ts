@@ -281,8 +281,9 @@ describe('GameTrackingRepository', () => {
         offenseStrategyId: verticalId,
         defenseStrategyId: zoneId,
         ourTurnovers: 0,
-        scoringMethod: 'Callahan',
-        scorerPlayerId: players.alex,
+        scoringMethod: 'Break side',
+        throwerPlayerId: players.blair,
+        receiverPlayerId: players.alex,
         ourScore: 1,
         opponentScore: 0,
       }],
@@ -354,7 +355,8 @@ describe('GameTrackingRepository', () => {
           initialDefenseType: null,
           ourTurnovers: 1,
           scoringMethod: 'Open side',
-          scorerPlayerId: players.alex,
+          throwerPlayerId: players.blair,
+          receiverPlayerId: players.alex,
           ourScore: 1,
           opponentScore: 0,
         },
@@ -364,7 +366,8 @@ describe('GameTrackingRepository', () => {
           initialDefenseType: 'Zone',
           ourTurnovers: 0,
           scoringMethod: null,
-          scorerPlayerId: null,
+          throwerPlayerId: null,
+          receiverPlayerId: null,
           ourScore: 1,
           opponentScore: 1,
         },
@@ -373,8 +376,20 @@ describe('GameTrackingRepository', () => {
 
     expect(saved.data.manualPlayerStatistics).toHaveLength(1);
     expect(saved.data.manualPoints).toMatchObject([
-      { sequenceNumber: 1, initialDefenseType: null, scoringMethod: 'Open side' },
-      { sequenceNumber: 2, initialDefenseType: 'Zone', scoringMethod: null },
+      {
+        sequenceNumber: 1,
+        initialDefenseType: null,
+        scoringMethod: 'Open side',
+        throwerPlayerId: players.blair,
+        receiverPlayerId: players.alex,
+      },
+      {
+        sequenceNumber: 2,
+        initialDefenseType: 'Zone',
+        scoringMethod: null,
+        throwerPlayerId: null,
+        receiverPlayerId: null,
+      },
     ]);
     expect(saved.statistics).toMatchObject({ ourScore: 1, opponentScore: 1 });
     expect(saved.statistics.lineStatistics[0]).toMatchObject({ pointsPlayed: 2, turnovers: 1 });
@@ -387,11 +402,72 @@ describe('GameTrackingRepository', () => {
         initialDefenseType: null,
         ourTurnovers: 0,
         scoringMethod: null,
-        scorerPlayerId: null,
+        throwerPlayerId: null,
+        receiverPlayerId: null,
         ourScore: 2,
         opponentScore: 0,
       }],
     })).toThrow('add exactly one goal');
+
+    expect(() => tracking.saveManualSummary(game.token, {
+      playerStatistics: [],
+      points: [{
+        lineId,
+        startingPossession: 'offense',
+        initialDefenseType: null,
+        ourTurnovers: 0,
+        scoringMethod: null,
+        throwerPlayerId: players.alex,
+        receiverPlayerId: players.alex,
+        ourScore: 1,
+        opponentScore: 0,
+      }],
+    })).toThrow('thrower and receiver must be different players');
+
+    expect(() => tracking.saveManualSummary(game.token, {
+      playerStatistics: [],
+      points: [{
+        lineId,
+        startingPossession: 'defense',
+        initialDefenseType: null,
+        ourTurnovers: 0,
+        scoringMethod: null,
+        throwerPlayerId: players.alex,
+        receiverPlayerId: null,
+        ourScore: 0,
+        opponentScore: 1,
+      }],
+    })).toThrow('can only name our thrower, receiver, and scoring method');
+  });
+
+  it('round-trips paper goal throwers and receivers through portable statistics', () => {
+    const { tracking, game, lineId, players } = configuredGame();
+    tracking.saveManualSummary(game.token, {
+      playerStatistics: [],
+      points: [{
+        lineId,
+        startingPossession: 'offense',
+        initialDefenseType: null,
+        ourTurnovers: 0,
+        scoringMethod: 'Deep shot',
+        throwerPlayerId: players.alex,
+        receiverPlayerId: players.blair,
+        ourScore: 1,
+        opponentScore: 0,
+      }],
+    });
+    const exported = parseGameStatisticsExport(JSON.parse(JSON.stringify(
+      createGameStatisticsExport(tracking.getSnapshot(game.token)!.data),
+    )) as unknown);
+
+    tracking.saveManualSummary(game.token, { playerStatistics: [], points: [] });
+    const restored = tracking.importStatistics(game.token, exported);
+
+    expect(restored.data.manualPoints).toMatchObject([{
+      throwerPlayerId: players.alex,
+      receiverPlayerId: players.blair,
+      scoringMethod: 'Deep shot',
+    }]);
   });
 
   it('layers game and point matchup role overrides over roster defaults', () => {

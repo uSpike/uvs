@@ -138,6 +138,11 @@ function manualSummaryInput(body: Record<string, unknown>): SaveManualSummaryInp
     points: body.points.map((value, index) => {
       const row = record(value, `Paper point ${index + 1}`);
       const startingPossession = String(row.startingPossession ?? '');
+      // Preserve receiver attribution from a version-one form that was already
+      // open when the server upgraded.
+      const receiverPlayerId = row.receiverPlayerId === undefined
+        ? row.scorerPlayerId
+        : row.receiverPlayerId;
       if (startingPossession !== 'offense' && startingPossession !== 'defense') {
         throw new Error(`Paper point ${index + 1} must start on offense or defense.`);
       }
@@ -149,7 +154,14 @@ function manualSummaryInput(body: Record<string, unknown>): SaveManualSummaryInp
         defenseStrategyId: optionalPositiveInteger(row.defenseStrategyId, 'Defense'),
         ourTurnovers: nonNegativeInteger(row.ourTurnovers, `Paper point ${index + 1} turnovers`),
         scoringMethod: optionalString(row.scoringMethod),
-        scorerPlayerId: optionalPositiveInteger(row.scorerPlayerId, `Paper point ${index + 1} scorer`),
+        throwerPlayerId: optionalPositiveInteger(
+          row.throwerPlayerId,
+          `Paper point ${index + 1} thrower`,
+        ),
+        receiverPlayerId: optionalPositiveInteger(
+          receiverPlayerId,
+          `Paper point ${index + 1} receiver`,
+        ),
         ourScore: nonNegativeInteger(row.ourScore, `Paper point ${index + 1} team score`),
         opponentScore: nonNegativeInteger(
           row.opponentScore,

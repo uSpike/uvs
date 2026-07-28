@@ -253,7 +253,7 @@ describe('game statistics', () => {
   it('uses paper player totals and point summaries without inventing play-by-play', () => {
     const data = gameData([]);
     data.manualPlayerStatistics = [
-      { playerId: 1, pointsPlayed: 5, hockeyAssists: 2, assists: 3, goals: 1, blocks: 4 },
+      { playerId: 1, pointsPlayed: 5, hockeyAssists: 2, assists: 0, goals: 1, blocks: 4 },
       { playerId: 2, pointsPlayed: 4, hockeyAssists: 0, assists: 1, goals: 0, blocks: 1 },
     ];
     data.manualPoints = [
@@ -267,7 +267,8 @@ describe('game statistics', () => {
         defenseStrategyId: null,
         ourTurnovers: 2,
         scoringMethod: 'End-zone isolation',
-        scorerPlayerId: 1,
+        throwerPlayerId: 2,
+        receiverPlayerId: 1,
         ourScore: 1,
         opponentScore: 0,
       },
@@ -281,7 +282,8 @@ describe('game statistics', () => {
         defenseStrategyId: null,
         ourTurnovers: 1,
         scoringMethod: null,
-        scorerPlayerId: null,
+        throwerPlayerId: null,
+        receiverPlayerId: null,
         ourScore: 1,
         opponentScore: 1,
       },
@@ -293,11 +295,11 @@ describe('game statistics', () => {
     expect(calculated.playerStatistics.find((stats) => stats.playerId === 1)).toMatchObject({
       pointsPlayed: 5,
       hockeyAssists: 2,
-      assists: 3,
+      assists: 0,
       goals: 1,
       blocks: 4,
       completions: 0,
-      extendedPlusMinus: 8,
+      extendedPlusMinus: 5,
       gamesPlayed: 1,
     });
     expect(calculated.lineStatistics[0]).toMatchObject({
@@ -312,6 +314,11 @@ describe('game statistics', () => {
       plusMinus: 0,
     });
     expect(calculated.matchupStatistics.unclassifiedPoints).toBe(2);
+
+    data.manualPlayerStatistics[1].assists = 2;
+    expect(calculateGameStatistics(data).warnings).toContain(
+      "Blair's paper total has 2 assists, but the point summaries credit 1.",
+    );
   });
 
   it('tracks scoring passes, hockey assists, disc time, and exact stoppage exclusion', () => {

@@ -94,7 +94,8 @@
     defenseStrategyId: number;
     ourTurnovers: number;
     scoringMethod: string;
-    scorerPlayerId: string;
+    throwerPlayerId: string;
+    receiverPlayerId: string;
     ourScore: number;
     opponentScore: number;
   }
@@ -432,7 +433,8 @@
       defenseStrategyId: point.defenseStrategyId ?? 0,
       ourTurnovers: point.ourTurnovers,
       scoringMethod: point.scoringMethod ?? '',
-      scorerPlayerId: point.scorerPlayerId?.toString() ?? '',
+      throwerPlayerId: point.throwerPlayerId?.toString() ?? '',
+      receiverPlayerId: point.receiverPlayerId?.toString() ?? '',
       ourScore: point.ourScore,
       opponentScore: point.opponentScore,
     }));
@@ -457,7 +459,8 @@
       defenseStrategyId: 0,
       ourTurnovers: 0,
       scoringMethod: '',
-      scorerPlayerId: '',
+      throwerPlayerId: '',
+      receiverPlayerId: '',
       ourScore: (previous?.ourScore ?? snapshot.data.game.initialOurScore) + 1,
       opponentScore: previous?.opponentScore ?? snapshot.data.game.initialOpponentScore,
     });
@@ -488,8 +491,11 @@
         offenseStrategyId: point.offenseStrategyId || null,
         defenseStrategyId: point.defenseStrategyId || null,
         scoringMethod: manualPointIsOurGoal(index) ? point.scoringMethod || null : null,
-        scorerPlayerId: manualPointIsOurGoal(index) && point.scorerPlayerId
-          ? Number(point.scorerPlayerId)
+        throwerPlayerId: manualPointIsOurGoal(index) && point.throwerPlayerId
+          ? Number(point.throwerPlayerId)
+          : null,
+        receiverPlayerId: manualPointIsOurGoal(index) && point.receiverPlayerId
+          ? Number(point.receiverPlayerId)
           : null,
       })),
     });
@@ -2125,7 +2131,7 @@
             {:else}
               <div class="paper-table-scroll">
                 <table class="paper-point-table">
-                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>Start</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Us</th><th title={statHelp.score}>Them</th><th>How we scored</th><th title={statHelp.goals}>Scorer</th><th></th></tr></thead>
+                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>Start</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Us</th><th title={statHelp.score}>Them</th><th>How we scored</th><th title={statHelp.assists}>Thrower</th><th title={statHelp.goals}>Receiver</th><th></th></tr></thead>
                   <tbody>
                     {#each manualPointDrafts as point, index}
                       <tr>
@@ -2144,9 +2150,15 @@
                         <td><input bind:value={point.opponentScore} type="number" min="0" max="999" aria-label={`Point ${index + 1} opponent score`} /></td>
                         <td><input bind:value={point.scoringMethod} type="text" maxlength="80" disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} scoring method`} /></td>
                         <td>
-                          <select bind:value={point.scorerPlayerId} disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} scorer`}>
+                          <select bind:value={point.throwerPlayerId} disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} thrower`}>
                             <option value="">Unknown</option>
-                            {#each snapshot.data.players as player}<option value={player.id.toString()}>{player.name}</option>{/each}
+                            {#each snapshot.data.players as player}<option value={player.id.toString()} disabled={point.receiverPlayerId === player.id.toString()}>{player.name}</option>{/each}
+                          </select>
+                        </td>
+                        <td>
+                          <select bind:value={point.receiverPlayerId} disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} receiver`}>
+                            <option value="">Unknown</option>
+                            {#each snapshot.data.players as player}<option value={player.id.toString()} disabled={point.throwerPlayerId === player.id.toString()}>{player.name}</option>{/each}
                           </select>
                         </td>
                         <td><button class="paper-remove" type="button" aria-label={`Remove point ${index + 1}`} title="Remove point" onclick={() => removeManualPoint(index)}><Trash2 size={13} /></button></td>
@@ -2559,7 +2571,7 @@
   .paper-form input[type='number'] { width:62px; text-align:right; }
   .paper-point-table select { width:92px; }
   .paper-point-table td:nth-child(4) input,.paper-point-table td:nth-child(8) input { width:130px; }
-  .paper-point-table td:nth-child(9) select { width:120px; }
+  .paper-point-table td:nth-child(9) select,.paper-point-table td:nth-child(10) select { width:120px; }
   .paper-form input:disabled,.paper-form select:disabled { color:#6f766d; background:#20231f; }
   .paper-empty { margin:0; padding:10px; color:#858d82; background:#20231f; font-size:9px; }
   .paper-add,.paper-actions button { display:inline-flex; align-items:center; justify-content:center; gap:5px; width:max-content; min-height:32px; padding:0 9px; border:1px solid #474d45; border-radius:4px; color:#d2d8cf; background:#292d27; font-size:10px; font-weight:680; }

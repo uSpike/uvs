@@ -149,6 +149,26 @@ export const actions: Actions = {
     }
   },
 
+  moveGame: async ({ request, locals, params }) => {
+    requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
+    const form = await request.formData();
+    try {
+      const tournamentId = positiveInteger(form.get('tournamentId'), 'Event');
+      const tournaments = new TournamentRepository();
+      if (!tournaments.getTournament(params.slug, tournamentId)) {
+        throw new Error('Select an event from this team.');
+      }
+      new CatalogRepository().moveGame(
+        tournamentId,
+        positiveInteger(form.get('gameId'), 'Game'),
+        gameOrderDirection(form.get('direction')),
+      );
+      return { action: 'moveGame', success: true };
+    } catch (caught) {
+      return failure('moveGame', caught);
+    }
+  },
+
   createRoster: async ({ request, locals, params }) => {
     requireAdmin(locals.role, resolve(`/admin/teams/${params.slug}`));
     const form = await request.formData();
@@ -398,6 +418,13 @@ function positiveInteger(value: FormDataEntryValue | null, name: string): number
 function strategyKind(value: FormDataEntryValue | null): 'offense' | 'defense' {
   if (value !== 'offense' && value !== 'defense') {
     throw new Error('Select offense or defense.');
+  }
+  return value;
+}
+
+function gameOrderDirection(value: FormDataEntryValue | null): 'earlier' | 'later' {
+  if (value !== 'earlier' && value !== 'later') {
+    throw new Error('Select whether to move the game earlier or later.');
   }
   return value;
 }

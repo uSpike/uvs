@@ -2642,34 +2642,6 @@
           <input type="checkbox" bind:checked={showPlaybackMarkers} disabled={playbackMarkers.length === 0} />
           <span>Action markers</span>
         </label>
-        <p class="mobile-gesture-help">
-          Pinch to zoom. Double-tap the left or right side of the video to seek 5 seconds.
-        </p>
-        <div class="view-options-divider mobile-seek-divider" role="separator"></div>
-        <button
-          class="view-option-action mobile-seek-option"
-          type="button"
-          disabled={!videoUrl || duration <= 0}
-          onclick={(event) => {
-            skipBy(-5);
-            closeContainingMenu(event);
-          }}
-        >
-          <ChevronsLeft size={16} aria-hidden="true" />
-          <span>Back 5 seconds</span>
-        </button>
-        <button
-          class="view-option-action mobile-seek-option"
-          type="button"
-          disabled={!videoUrl || duration <= 0}
-          onclick={(event) => {
-            skipBy(5);
-            closeContainingMenu(event);
-          }}
-        >
-          <ChevronsRight size={16} aria-hidden="true" />
-          <span>Forward 5 seconds</span>
-        </button>
         <div class="view-options-divider" role="separator"></div>
         <button
           class="view-option-action"
