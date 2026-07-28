@@ -1,30 +1,52 @@
 import { describe, expect, it } from 'vitest';
 import {
-  cumulativePaperPointScores,
+  classifyPaperPoints,
   optionalPaperStatistic,
   paperPointScoringSides,
   paperStatisticOrZero,
 } from './paper-stats-form';
 
 describe('paper stats form values', () => {
-  it('round-trips scoring sides with nonzero initial scores', () => {
+  it('classifies scoring sides and later O/D starts with nonzero initial scores', () => {
     const scores = [
       { ourScore: 4, opponentScore: 2 },
       { ourScore: 4, opponentScore: 3 },
       { ourScore: 5, opponentScore: 3 },
     ];
 
+    expect(classifyPaperPoints(3, 2, 'offense', scores)).toEqual([
+      { startingPossession: 'offense', scoringSide: 'us' },
+      { startingPossession: 'defense', scoringSide: 'opponent' },
+      { startingPossession: 'offense', scoringSide: 'us' },
+    ]);
     expect(paperPointScoringSides(3, 2, scores)).toEqual([true, false, true]);
-    expect(cumulativePaperPointScores(3, 2, [true, false, true])).toEqual(scores);
   });
 
-  it('recalculates every later score when a scoring side changes or a point is removed', () => {
-    expect(cumulativePaperPointScores(0, 0, [false, true])).toEqual([
-      { ourScore: 0, opponentScore: 1 },
-      { ourScore: 1, opponentScore: 1 },
-    ]);
-    expect(cumulativePaperPointScores(0, 0, [true])).toEqual([
+  it('keeps consecutive breaks on D and consecutive breaks against on O', () => {
+    expect(classifyPaperPoints(0, 0, 'defense', [
       { ourScore: 1, opponentScore: 0 },
+      { ourScore: 2, opponentScore: 0 },
+    ])).toEqual([
+      { startingPossession: 'defense', scoringSide: 'us' },
+      { startingPossession: 'defense', scoringSide: 'us' },
+    ]);
+
+    expect(classifyPaperPoints(0, 0, 'offense', [
+      { ourScore: 0, opponentScore: 1 },
+      { ourScore: 0, opponentScore: 2 },
+    ])).toEqual([
+      { startingPossession: 'offense', scoringSide: 'opponent' },
+      { startingPossession: 'offense', scoringSide: 'opponent' },
+    ]);
+  });
+
+  it('marks an invalid score and the following O/D start as unavailable', () => {
+    expect(classifyPaperPoints(0, 0, 'offense', [
+      { ourScore: 1, opponentScore: 1 },
+      { ourScore: 2, opponentScore: 1 },
+    ])).toEqual([
+      { startingPossession: 'offense', scoringSide: null },
+      { startingPossession: null, scoringSide: 'us' },
     ]);
   });
 

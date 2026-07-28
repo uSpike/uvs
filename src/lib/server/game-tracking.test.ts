@@ -67,9 +67,11 @@ function configuredGame() {
     metadata,
   });
   return {
+    catalog,
     tracking: new GameTrackingRepository(database),
     tournaments,
     rosterId,
+    tournamentId,
     game,
     lineId,
     players: { alex, blair, casey, devon },
@@ -77,6 +79,29 @@ function configuredGame() {
 }
 
 describe('GameTrackingRepository', () => {
+  it('lists season games in their custom event order', () => {
+    const { catalog, tracking, rosterId, tournamentId, game } = configuredGame();
+    const metadata = parseMetadataJsonl(metadataJsonl);
+    const laterGame = catalog.createGame({
+      tournamentId,
+      title: 'Union vs. Drift',
+      opponentName: 'Drift',
+      playedAt: '2026-06-01T12:00',
+      playerCount: 3,
+      initialOurScore: 0,
+      initialOpponentScore: 0,
+      videoSource: 'file:///srv/later-game.mp4',
+      metadataJsonl,
+      metadata,
+    });
+
+    catalog.moveGame(tournamentId, laterGame.id, 'earlier');
+
+    expect(
+      tracking.listSeasonGameData(rosterId).map((data) => data.game.id),
+    ).toEqual([laterGame.id, game.id]);
+  });
+
   it('exports and atomically restores complete game statistics', () => {
     const { tracking, game, lineId, players } = configuredGame();
     tracking.setInitialLineupEndzone(game.token, 'right');

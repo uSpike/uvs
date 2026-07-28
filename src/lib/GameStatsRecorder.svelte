@@ -26,7 +26,7 @@
   import { gameEventLabel } from './game-events';
   import type { MatchupRole } from './matchup';
   import {
-    cumulativePaperPointScores,
+    classifyPaperPoints,
     optionalPaperStatistic,
     paperPointScoringSides,
     paperStatisticOrZero,
@@ -106,7 +106,7 @@
 
   interface ManualPointDraft {
     lineId: number;
-    startingPossession: StartingPossession;
+    startingPossessionOverride: StartingPossession | '';
     initialDefenseType: string;
     offenseStrategyId: number;
     defenseStrategyId: number;
@@ -114,7 +114,8 @@
     scoringMethod: string;
     throwerPlayerId: string;
     receiverPlayerId: string;
-    ourGoal: boolean;
+    ourScore: number;
+    opponentScore: number;
   }
 
   interface TimelineContextItem {
@@ -187,6 +188,19 @@
   let highlightPlaylistRun = 0;
   let manualPlayerDrafts = $state<ManualPlayerDraft[]>((() => manualPlayerRows(initialSnapshot))());
   let manualPointDrafts = $state<ManualPointDraft[]>((() => manualPointRows(initialSnapshot))());
+  let manualPointClassifications = $derived(classifyPaperPoints(
+    snapshot.data.game.initialOurScore,
+    snapshot.data.game.initialOpponentScore,
+    manualPointDrafts[0]?.startingPossessionOverride || 'offense',
+    manualPointDrafts,
+  ));
+  let manualPointStartingPossessions = $derived(
+    manualPointDrafts.map((point, index): StartingPossession | null =>
+      point.startingPossessionOverride ||
+      manualPointClassifications[index]?.startingPossession ||
+      null
+    ),
+  );
   let observedOpenPointId = $state<number | null>(null);
   let observedOpenPointEndMs = $state(0);
   let autoSkipPointGaps = $state(true);
@@ -442,15 +456,19 @@
   }
 
   function manualPointRows(value: GameTrackingSnapshot): ManualPointDraft[] {
-    const ourGoals = paperPointScoringSides(
+    const classifications = classifyPaperPoints(
       value.data.game.initialOurScore,
       value.data.game.initialOpponentScore,
+      value.data.manualPoints[0]?.startingPossession ?? 'offense',
       value.data.manualPoints,
     );
     return value.data.manualPoints.map((point, index) => {
       return {
         lineId: point.lineId,
-        startingPossession: point.startingPossession,
+        startingPossessionOverride:
+          index === 0 || point.startingPossession !== classifications[index].startingPossession
+            ? point.startingPossession
+            : '',
         initialDefenseType: point.initialDefenseType ?? '',
         offenseStrategyId: point.offenseStrategyId ?? 0,
         defenseStrategyId: point.defenseStrategyId ?? 0,
@@ -458,7 +476,8 @@
         scoringMethod: point.scoringMethod ?? '',
         throwerPlayerId: point.throwerPlayerId?.toString() ?? '',
         receiverPlayerId: point.receiverPlayerId?.toString() ?? '',
-        ourGoal: ourGoals[index],
+        ourScore: point.ourScore,
+        opponentScore: point.opponentScore,
       };
     });
   }
@@ -472,7 +491,7 @@
     const previous = manualPointDrafts.at(-1);
     manualPointDrafts.push({
       lineId: previous?.lineId ?? snapshot.data.lines[0]?.id ?? 0,
-      startingPossession: previous?.ourGoal ? 'defense' : 'offense',
+      startingPossessionOverride: previous ? '' : 'offense',
       initialDefenseType: '',
       offenseStrategyId: 0,
       defenseStrategyId: 0,
@@ -480,24 +499,46 @@
       scoringMethod: '',
       throwerPlayerId: '',
       receiverPlayerId: '',
-      ourGoal: true,
+      ourScore: (previous?.ourScore ?? snapshot.data.game.initialOurScore) + 1,
+      opponentScore: previous?.opponentScore ?? snapshot.data.game.initialOpponentScore,
     });
   }
 
   function removeManualPoint(index: number): void {
+    const nextFirstStartingPossession =
+      index === 0 ? manualPointStartingPossessions[1] : null;
     manualPointDrafts.splice(index, 1);
+    if (index === 0 && manualPointDrafts[0] && nextFirstStartingPossession !== null) {
+      manualPointDrafts[0].startingPossessionOverride = nextFirstStartingPossession;
+    }
   }
 
   function manualPointIsOurGoal(index: number): boolean {
-    return manualPointDrafts[index].ourGoal;
+    return manualPointClassifications[index]?.scoringSide === 'us';
   }
 
   async function saveManualSummary(): Promise<void> {
-    const scores = cumulativePaperPointScores(
-      snapshot.data.game.initialOurScore,
-      snapshot.data.game.initialOpponentScore,
-      manualPointDrafts.map((point) => point.ourGoal),
+    mutationError = '';
+    let scoringSides: boolean[];
+    try {
+      scoringSides = paperPointScoringSides(
+        snapshot.data.game.initialOurScore,
+        snapshot.data.game.initialOpponentScore,
+        manualPointDrafts,
+      );
+    } catch (caught) {
+      mutationError = caught instanceof Error
+        ? caught.message
+        : 'Paper point scores are invalid.';
+      return;
+    }
+    const startingPossessions: StartingPossession[] = manualPointStartingPossessions.flatMap(
+      (startingPossession) => startingPossession === null ? [] : [startingPossession],
     );
+    if (startingPossessions.length !== manualPointDrafts.length) {
+      mutationError = 'Fix the paper point scores before saving.';
+      return;
+    }
     const saved = await mutate({
       operation: 'saveManualSummary',
       playerStatistics: manualPlayerDrafts.map((stats) => ({
@@ -510,8 +551,8 @@
       })),
       points: manualPointDrafts.map((point, index) => ({
         lineId: point.lineId,
-        startingPossession: point.startingPossession,
-        initialDefenseType: point.startingPossession === 'defense'
+        startingPossession: startingPossessions[index],
+        initialDefenseType: startingPossessions[index] === 'defense'
           ? point.defenseStrategyId
             ? strategyName(point.defenseStrategyId)
             : point.initialDefenseType || null
@@ -519,14 +560,15 @@
         offenseStrategyId: point.offenseStrategyId || null,
         defenseStrategyId: point.defenseStrategyId || null,
         ourTurnovers: paperStatisticOrZero(point.ourTurnovers),
-        scoringMethod: manualPointIsOurGoal(index) ? point.scoringMethod || null : null,
-        throwerPlayerId: manualPointIsOurGoal(index) && point.throwerPlayerId
+        scoringMethod: scoringSides[index] ? point.scoringMethod || null : null,
+        throwerPlayerId: scoringSides[index] && point.throwerPlayerId
           ? Number(point.throwerPlayerId)
           : null,
-        receiverPlayerId: manualPointIsOurGoal(index) && point.receiverPlayerId
+        receiverPlayerId: scoringSides[index] && point.receiverPlayerId
           ? Number(point.receiverPlayerId)
           : null,
-        ...scores[index],
+        ourScore: point.ourScore,
+        opponentScore: point.opponentScore,
       })),
     });
     if (saved) {
@@ -2133,7 +2175,7 @@
           {/if}
         </header>
         <p class="paper-coverage-note">
-          Player totals supply points, hockey assists, assists, goals, and Ds. Point rows identify who scored and the line result. Play-by-play-only fields remain partial or unavailable.
+          Player totals supply points, hockey assists, assists, goals, and Ds. Point rows supply cumulative scores, automatic O/D starts with optional overrides, and goal attribution. Play-by-play-only fields remain partial or unavailable.
         </p>
         <form class="paper-form" onsubmit={(event) => { event.preventDefault(); void saveManualSummary(); }}>
           <fieldset disabled={!editing || saving}>
@@ -2158,37 +2200,53 @@
           </fieldset>
 
           <fieldset disabled={!editing || saving}>
-            <legend>Point summaries <small>Check = us; clear = opponent</small></legend>
+            <legend>Point summaries <small>Scores are after each point; point 1 sets O/D, then later starts are automatic unless overridden</small></legend>
             {#if manualPointDrafts.length === 0}
               <p class="paper-empty">No paper points entered.</p>
             {:else}
               <div class="paper-table-scroll">
                 <table class="paper-point-table">
-                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>Start</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Scored by</th><th>How we scored</th><th title={statHelp.assists}>Thrower</th><th title={statHelp.goals}>Receiver</th><th></th></tr></thead>
+                  <thead><tr><th>#</th><th>Line</th><th title={statHelp.pointStart}>O/D</th><th>Starting system</th><th title={statHelp.turnovers}>Our TOs</th><th title={statHelp.score}>Us</th><th title={statHelp.score}>Them</th><th>How we scored</th><th title={statHelp.assists}>Thrower</th><th title={statHelp.goals}>Receiver</th><th></th></tr></thead>
                   <tbody>
                     {#each manualPointDrafts as point, index}
+                      {@const classification = manualPointClassifications[index]}
+                      {@const startingPossession = manualPointStartingPossessions[index]}
                       <tr>
                         <th>{index + 1}</th>
                         <td><select bind:value={point.lineId} aria-label={`Point ${index + 1} line`}>{#each snapshot.data.lines as line}<option value={line.id}>{line.name}</option>{/each}</select></td>
-                        <td><select bind:value={point.startingPossession} aria-label={`Point ${index + 1} starting possession`}><option value="offense">O</option><option value="defense">D</option></select></td>
                         <td>
-                          {#if point.startingPossession === 'offense'}
-                            <select bind:value={point.offenseStrategyId} aria-label={`Point ${index + 1} starting offense`}><option value={0}>Not recorded</option>{#each snapshot.data.strategies.filter((strategy) => strategy.kind === 'offense') as strategy}<option value={strategy.id}>{strategy.name}{strategy.isDefault ? ' (default)' : ''}</option>{/each}</select>
+                          {#if index === 0}
+                            <select bind:value={point.startingPossessionOverride} aria-label="First paper point starting possession">
+                              <option value="offense">O</option>
+                              <option value="defense">D</option>
+                            </select>
                           {:else}
+                            <select
+                              class="paper-possession-select"
+                              class:override={point.startingPossessionOverride !== ''}
+                              bind:value={point.startingPossessionOverride}
+                              aria-label={`Point ${index + 1} starting possession ${point.startingPossessionOverride === '' ? 'automatic' : 'override'}`}
+                              aria-live="polite"
+                              title="Use an override for halftime or another possession reset"
+                            >
+                              <option value="">Auto · {classification.startingPossession === null ? '—' : classification.startingPossession === 'offense' ? 'O' : 'D'}</option>
+                              <option value="offense">O override</option>
+                              <option value="defense">D override</option>
+                            </select>
+                          {/if}
+                        </td>
+                        <td>
+                          {#if startingPossession === 'offense'}
+                            <select bind:value={point.offenseStrategyId} aria-label={`Point ${index + 1} starting offense`}><option value={0}>Not recorded</option>{#each snapshot.data.strategies.filter((strategy) => strategy.kind === 'offense') as strategy}<option value={strategy.id}>{strategy.name}{strategy.isDefault ? ' (default)' : ''}</option>{/each}</select>
+                          {:else if startingPossession === 'defense'}
                             <select bind:value={point.defenseStrategyId} aria-label={`Point ${index + 1} starting defense`}><option value={0}>Not recorded</option>{#each snapshot.data.strategies.filter((strategy) => strategy.kind === 'defense') as strategy}<option value={strategy.id}>{strategy.name}{strategy.isDefault ? ' (default)' : ''}</option>{/each}</select>
+                          {:else}
+                            <span class="paper-system-unavailable">Fix previous score</span>
                           {/if}
                         </td>
                         <td><input bind:value={point.ourTurnovers} type="number" min="0" max="99" aria-label={`Point ${index + 1} tracked-team turnovers`} /></td>
-                        <td>
-                          <label class="paper-score-check">
-                            <input
-                              bind:checked={point.ourGoal}
-                              type="checkbox"
-                              aria-label={`Point ${index + 1} scored by our team; clear for opponent`}
-                            />
-                            <span>{point.ourGoal ? 'Us' : 'Them'}</span>
-                          </label>
-                        </td>
+                        <td><input bind:value={point.ourScore} type="number" min="0" max="999" aria-label={`Point ${index + 1} team score`} /></td>
+                        <td><input bind:value={point.opponentScore} type="number" min="0" max="999" aria-label={`Point ${index + 1} opponent score`} /></td>
                         <td><input bind:value={point.scoringMethod} type="text" maxlength="80" disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} scoring method`} /></td>
                         <td>
                           <select bind:value={point.throwerPlayerId} disabled={!manualPointIsOurGoal(index)} aria-label={`Point ${index + 1} thrower`}>
@@ -2611,10 +2669,11 @@
   .paper-form input,.paper-form select { min-width:0; height:28px; padding:3px 5px; border:1px solid #484e46; border-radius:3px; color:#edf1eb; background:#252824; font-size:9px; }
   .paper-form input[type='number'] { width:62px; text-align:right; }
   .paper-point-table select { width:92px; }
-  .paper-point-table td:nth-child(4) input,.paper-point-table td:nth-child(7) input { width:130px; }
-  .paper-point-table td:nth-child(8) select,.paper-point-table td:nth-child(9) select { width:120px; }
-  .paper-score-check { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:58px; color:#d7ddd4; font-size:9px; font-weight:700; }
-  .paper-score-check input { width:14px; height:14px; padding:0; accent-color:#087f9b; }
+  .paper-point-table td:nth-child(8) input { width:130px; }
+  .paper-point-table td:nth-child(9) select,.paper-point-table td:nth-child(10) select { width:120px; }
+  .paper-point-table .paper-possession-select { width:78px; color:#8bd9e2; }
+  .paper-point-table .paper-possession-select.override { border-color:#8a7431; color:#e5c96d; }
+  .paper-system-unavailable { color:#de9298; font-size:8px; }
   .paper-form input:disabled,.paper-form select:disabled { color:#6f766d; background:#20231f; }
   .paper-empty { margin:0; padding:10px; color:#858d82; background:#20231f; font-size:9px; }
   .paper-add,.paper-actions button { display:inline-flex; align-items:center; justify-content:center; gap:5px; width:max-content; min-height:32px; padding:0 9px; border:1px solid #474d45; border-radius:4px; color:#d2d8cf; background:#292d27; font-size:10px; font-weight:680; }

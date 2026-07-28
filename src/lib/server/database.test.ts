@@ -54,7 +54,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(18);
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
     expect(
       database.prepare(
         `SELECT season_rosters.name AS roster, tournaments.name AS tournament,
@@ -119,7 +119,7 @@ describe('database migrations', () => {
 
     expect(database.prepare('SELECT COUNT(*) AS count FROM season_rosters').get()).toEqual({ count: 0 });
     expect(database.prepare('SELECT COUNT(*) AS count FROM tournaments').get()).toEqual({ count: 0 });
-    expect(database.pragma('user_version', { simple: true })).toBe(18);
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
     database.close();
   });
 
@@ -141,7 +141,7 @@ describe('database migrations', () => {
     expect(
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_players'").get(),
     ).toBeUndefined();
-    expect(database.pragma('user_version', { simple: true })).toBe(18);
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
     database.close();
   });
 
@@ -169,7 +169,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(18);
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
     expect(
       (database.pragma('table_info(manual_game_points)') as Array<{ name: string }>)
         .map((column) => column.name),
@@ -183,6 +183,73 @@ describe('database migrations', () => {
         )
         .get(),
     ).toEqual({ receiver_player_id: 7, thrower_player_id: null });
+    database.close();
+  });
+
+  it('repairs paper attribution and game order after a schema-version collision', () => {
+    const database = new Database(':memory:');
+    database.pragma('foreign_keys = ON');
+    database.exec(`
+      CREATE TABLE players (
+        id INTEGER PRIMARY KEY
+      );
+      CREATE TABLE manual_game_points (
+        id INTEGER PRIMARY KEY,
+        scorer_player_id INTEGER REFERENCES players(id) ON DELETE RESTRICT
+      );
+      CREATE TABLE games (
+        id INTEGER PRIMARY KEY,
+        tournament_id INTEGER NOT NULL,
+        played_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE processing_projects (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+      INSERT INTO players (id) VALUES (7);
+      INSERT INTO manual_game_points (id, scorer_player_id) VALUES (1, 7);
+      INSERT INTO games VALUES
+        (10, 1, NULL, '2026-01-10T00:00:00Z'),
+        (11, 1, '2026-01-05T10:00:00Z', '2026-01-01T00:00:00Z');
+      INSERT INTO processing_projects VALUES (1, 'Preserve me');
+      PRAGMA user_version = 19;
+    `);
+
+    migrateDatabase(database);
+
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(
+      (database.pragma('table_info(manual_game_points)') as Array<{ name: string }>)
+        .map((column) => column.name),
+    ).toEqual(['id', 'receiver_player_id', 'thrower_player_id']);
+    expect(
+      database
+        .prepare(
+          `SELECT receiver_player_id, thrower_player_id
+             FROM manual_game_points
+            WHERE id = 1`,
+        )
+        .get(),
+    ).toEqual({ receiver_player_id: 7, thrower_player_id: null });
+    expect(
+      database
+        .prepare('SELECT id, sort_order FROM games ORDER BY sort_order, id')
+        .all(),
+    ).toEqual([
+      { id: 11, sort_order: 0 },
+      { id: 10, sort_order: 1 },
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE type = 'index' AND name = 'games_tournament_id_sort_order_idx'`,
+        )
+        .get(),
+    ).toEqual({ name: 'games_tournament_id_sort_order_idx' });
+    expect(database.prepare('SELECT name FROM processing_projects WHERE id = 1').get())
+      .toEqual({ name: 'Preserve me' });
     database.close();
   });
 
@@ -205,7 +272,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(18);
+    expect(database.pragma('user_version', { simple: true })).toBe(21);
     expect(
       database
         .prepare(

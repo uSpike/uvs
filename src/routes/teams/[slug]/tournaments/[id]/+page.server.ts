@@ -34,6 +34,8 @@ export const load: PageServerLoad = ({ params, url }) => {
     rosterId: roster.id,
     focusedGameToken: url.searchParams.get('game'),
     statistics: totals,
+    aggregatePlayers: players.map((player) => ({ id: player.id, name: player.name })),
+    aggregateLines: lines,
     games: summaries.map((game) => {
       const stats = statisticsByGameId.get(game.id) ?? null;
       return {

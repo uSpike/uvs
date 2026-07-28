@@ -196,7 +196,7 @@ export class GameTrackingRepository {
            FROM games
            JOIN tournaments ON tournaments.id = games.tournament_id
           WHERE tournaments.season_roster_id = ?
-          ORDER BY games.played_at, games.id`,
+          ORDER BY tournaments.starts_on, tournaments.id, games.sort_order, games.id`,
       )
       .all(seasonRosterId) as Array<{ token: string }>;
     return tokens

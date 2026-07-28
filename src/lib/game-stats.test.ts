@@ -502,6 +502,23 @@ describe('game statistics', () => {
       completions: 4,
       goals: 2,
     });
+
+    const selected = mergeGameStatistics([calculated], data.players, data.lines);
+    expect(selected.coverage.gameCount).toBe(1);
+    expect(selected.playerStatistics.find((stats) => stats.playerId === 1)).toMatchObject({
+      gamesPlayed: 1,
+      completions: 2,
+      touches: 2,
+    });
+
+    const empty = mergeGameStatistics([], data.players, data.lines);
+    expect(empty.coverage).toEqual({
+      gameCount: 0,
+      playByPlayGames: 0,
+      paperPlayerGames: 0,
+      paperPointGames: 0,
+    });
+    expect(empty.playerStatistics.every((stats) => stats.gamesPlayed === 0)).toBe(true);
   });
 
   it('credits every participant with a point win but only active scorers with plus-minus', () => {

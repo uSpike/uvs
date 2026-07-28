@@ -37,6 +37,7 @@ export const load: PageServerLoad = ({ params }) => {
   const games = seasonGames.map((game, index) => ({
     ...game.game,
     statistics: calculated[index].playerStatistics.find((stats) => stats.playerId === player.id)!,
+    coverage: calculated[index].coverage,
     actions: playerGameActions(game, player.id),
     ourScore: calculated[index].ourScore,
     opponentScore: calculated[index].opponentScore,

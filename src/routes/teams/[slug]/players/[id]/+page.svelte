@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowLeft, ChevronDown, Play, UserRound } from '@lucide/svelte';
   import { resolve } from '$app/paths';
+  import { mergeSelectedPlayerStatistics } from '$lib/player-stat-selection';
   import { STAT_DESCRIPTIONS as statHelp } from '$lib/stat-descriptions';
   import {
     compareTableSortValues,
@@ -28,6 +29,29 @@
   let gameSortKey = $state<GameSortKey | null>(null);
   let gameSortDirection = $state<TableSortDirection>('ascending');
   let expandedGameTokens = $state<string[]>([]);
+  let excludedGameIds = $state<number[]>([]);
+  let selectionPlayerId = $state((() => data.player.id)());
+
+  const selectedGameIds = $derived(
+    data.games
+      .filter((game) => !excludedGameIds.includes(game.id))
+      .map((game) => game.id),
+  );
+  const selectedGameIdSet = $derived(new Set(selectedGameIds));
+  const selectedStatistics = $derived(mergeSelectedPlayerStatistics(
+    data.total,
+    data.games
+      .filter((game) => selectedGameIdSet.has(game.id))
+      .map((game) => ({ statistics: game.statistics, coverage: game.coverage })),
+  ));
+  const selectedTotal = $derived(selectedStatistics.total);
+  const selectedCoverage = $derived(selectedStatistics.coverage);
+
+  $effect(() => {
+    if (selectionPlayerId === data.player.id) return;
+    selectionPlayerId = data.player.id;
+    excludedGameIds = [];
+  });
 
   const duration = (milliseconds: number): string => {
     const seconds = Math.round(milliseconds / 1000);
@@ -142,6 +166,58 @@
       : [...expandedGameTokens, token];
   }
 
+  function setSelectedGames(gameIds: Set<number>): void {
+    excludedGameIds = data.games
+      .filter((game) => !gameIds.has(game.id))
+      .map((game) => game.id);
+  }
+
+  function setGameIncluded(gameId: number, included: boolean): void {
+    const next = new Set(selectedGameIds);
+    if (included) next.add(gameId);
+    else next.delete(gameId);
+    setSelectedGames(next);
+  }
+
+  function tournamentGameIds(tournamentId: number): number[] {
+    return data.games
+      .filter((game) => game.tournamentId === tournamentId)
+      .map((game) => game.id);
+  }
+
+  function tournamentSelection(tournamentId: number): {
+    checked: boolean;
+    indeterminate: boolean;
+    selected: number;
+    total: number;
+  } {
+    const gameIds = tournamentGameIds(tournamentId);
+    const selected = gameIds.filter((gameId) => selectedGameIdSet.has(gameId)).length;
+    return {
+      checked: gameIds.length > 0 && selected === gameIds.length,
+      indeterminate: selected > 0 && selected < gameIds.length,
+      selected,
+      total: gameIds.length,
+    };
+  }
+
+  function setTournamentIncluded(tournamentId: number, included: boolean): void {
+    const next = new Set(selectedGameIds);
+    for (const gameId of tournamentGameIds(tournamentId)) {
+      if (included) next.add(gameId);
+      else next.delete(gameId);
+    }
+    setSelectedGames(next);
+  }
+
+  function includeAllGames(): void {
+    excludedGameIds = [];
+  }
+
+  function excludeAllGames(): void {
+    excludedGameIds = data.games.map((game) => game.id);
+  }
+
   function actionHref(
     game: GameRow,
     action: GameRow['actions'][number],
@@ -183,25 +259,47 @@
   <a class="back-link" href={resolve(`/teams/${data.team.slug}`)}><ArrowLeft size={15} />{data.team.name}</a>
   <header class="player-heading"><span><UserRound size={23} /></span><div><h1>{data.player.name}</h1><p>{data.roster.name} · {data.player.matchupRole?.toUpperCase() ?? 'matchup role not set'}</p></div></header>
 
-  {#if data.coverage.paperPlayerGames > 0 || data.coverage.paperPointGames > 0}
-    <p class="coverage-note">Paper records contribute to these totals. Playing time, O/D splits, and play-by-play fields are partial for games without complete video statistics.</p>
-  {/if}
-
-  <section class="totals-grid" aria-label="Season totals">
-    <div title={statHelp.timePlayed}><span>Playing time</span><strong>{duration(data.total.timePlayedMs)}</strong></div>
-    <div title={statHelp.pointsPlayed}><span>Points</span><strong>{data.total.pointsPlayed}</strong></div>
-    <div title={statHelp.goals}><span>Goals</span><strong>{data.total.goals}</strong></div>
-    <div title={statHelp.assists}><span>Assists</span><strong>{data.total.assists}</strong></div>
-    <div title={statHelp.hockeyAssists}><span>Hockey assists</span><strong>{data.total.hockeyAssists}</strong></div>
-    <div title={statHelp.blocks}><span>Blocks</span><strong>{data.total.blocks}</strong></div>
-    <div title={statHelp.turnovers}><span>Turnovers</span><strong>{data.total.turnovers}</strong></div>
-    <div title={statHelp.passingPercentage}><span>Passing</span><strong>{pct(data.total.throwingAttempts - data.total.passerTurnovers, data.total.throwingAttempts)}</strong></div>
-    <div title={statHelp.receivingPercentage}><span>Receiving</span><strong>{pct(data.total.receptions, data.total.receivingTargets)}</strong></div>
-    <div title={statHelp.drops}><span>Drops</span><strong>{data.total.drops}</strong></div>
-    <div title={statHelp.touches}><span>Touches</span><strong>{data.total.touches}</strong></div>
-    <div title={statHelp.turnoversPerTouch}><span>Turnovers/touch</span><strong>{pct(data.total.turnovers, data.total.touches)}</strong></div>
-    <div title={statHelp.plusMinus}><span>Plus/minus</span><strong>{data.total.plusMinus > 0 ? '+' : ''}{data.total.plusMinus}</strong></div>
-    <div title={statHelp.discTime}><span>Disc time</span><strong>{duration(data.total.timeWithDiscMs)}</strong></div>
+  <section class="overall-totals" aria-labelledby="overall-totals-heading">
+    <header>
+      <div>
+        <h2 id="overall-totals-heading">Overall totals</h2>
+        <p aria-live="polite">
+          {selectedGameIds.length} of {data.games.length}
+          {data.games.length === 1 ? 'game' : 'games'} included
+        </p>
+      </div>
+      <div class="selection-actions">
+        <button
+          type="button"
+          disabled={selectedGameIds.length === data.games.length}
+          onclick={includeAllGames}
+        >Include all</button>
+        <button
+          type="button"
+          disabled={selectedGameIds.length === 0}
+          onclick={excludeAllGames}
+        >Exclude all</button>
+      </div>
+    </header>
+    {#if selectedCoverage.paperPlayerGames > 0 || selectedCoverage.paperPointGames > 0}
+      <p class="coverage-note">Paper records contribute to the selected totals. Playing time, O/D splits, and play-by-play fields are partial for selected games without complete video statistics.</p>
+    {/if}
+    <div class="totals-grid" aria-label="Selected season totals">
+      <div title={statHelp.timePlayed}><span>Playing time</span><strong>{duration(selectedTotal.timePlayedMs)}</strong></div>
+      <div title={statHelp.pointsPlayed}><span>Points</span><strong>{selectedTotal.pointsPlayed}</strong></div>
+      <div title={statHelp.goals}><span>Goals</span><strong>{selectedTotal.goals}</strong></div>
+      <div title={statHelp.assists}><span>Assists</span><strong>{selectedTotal.assists}</strong></div>
+      <div title={statHelp.hockeyAssists}><span>Hockey assists</span><strong>{selectedTotal.hockeyAssists}</strong></div>
+      <div title={statHelp.blocks}><span>Blocks</span><strong>{selectedTotal.blocks}</strong></div>
+      <div title={statHelp.turnovers}><span>Turnovers</span><strong>{selectedTotal.turnovers}</strong></div>
+      <div title={statHelp.passingPercentage}><span>Passing</span><strong>{pct(selectedTotal.throwingAttempts - selectedTotal.passerTurnovers, selectedTotal.throwingAttempts)}</strong></div>
+      <div title={statHelp.receivingPercentage}><span>Receiving</span><strong>{pct(selectedTotal.receptions, selectedTotal.receivingTargets)}</strong></div>
+      <div title={statHelp.drops}><span>Drops</span><strong>{selectedTotal.drops}</strong></div>
+      <div title={statHelp.touches}><span>Touches</span><strong>{selectedTotal.touches}</strong></div>
+      <div title={statHelp.turnoversPerTouch}><span>Turnovers/touch</span><strong>{pct(selectedTotal.turnovers, selectedTotal.touches)}</strong></div>
+      <div title={statHelp.plusMinus}><span>Plus/minus</span><strong>{selectedTotal.plusMinus > 0 ? '+' : ''}{selectedTotal.plusMinus}</strong></div>
+      <div title={statHelp.discTime}><span>Disc time</span><strong>{duration(selectedTotal.timeWithDiscMs)}</strong></div>
+    </div>
   </section>
 
   <section class="data-section">
@@ -229,7 +327,34 @@
       {@render tournamentHeader('plusMinus', '+/-', statHelp.plusMinus, 'number')}
       {@render tournamentHeader('timeWithDiscMs', 'Disc', statHelp.discTime, 'number')}
     </tr></thead><tbody>
-      {#each sortedTournaments() as tournament}<tr><th><a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>{tournament.name}</a></th><td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{pct(tournament.statistics.throwingAttempts - tournament.statistics.passerTurnovers,tournament.statistics.throwingAttempts)}</td><td>{tournament.statistics.receptions}</td><td>{pct(tournament.statistics.receptions,tournament.statistics.receivingTargets)}</td><td>{tournament.statistics.drops}</td><td>{tournament.statistics.touches}</td><td>{tournament.statistics.turnovers}</td><td>{pct(tournament.statistics.turnovers,tournament.statistics.touches)}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td></tr>{/each}
+      {#each sortedTournaments() as tournament}
+        {@const selection = tournamentSelection(tournament.id)}
+        <tr class:scope-excluded={selection.selected === 0}>
+          <th>
+            <div class="scope-cell">
+              <label
+                class="scope-toggle"
+                class:disabled={selection.total === 0}
+                title={selection.total === 0 ? 'This event has no games to include' : `Include ${tournament.name} games in overall totals`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selection.checked}
+                  indeterminate={selection.indeterminate}
+                  disabled={selection.total === 0}
+                  aria-label={`Include games from ${tournament.name} in overall totals`}
+                  onchange={(event) => setTournamentIncluded(tournament.id, event.currentTarget.checked)}
+                />
+              </label>
+              <span class="scope-copy">
+                <a href={resolve(`/teams/${data.team.slug}/tournaments/${tournament.id}`)}>{tournament.name}</a>
+                <small>{selection.selected} of {selection.total} games included</small>
+              </span>
+            </div>
+          </th>
+          <td>{duration(tournament.statistics.timePlayedMs)}</td><td>{tournament.statistics.pointsPlayed}</td><td>{tournament.statistics.oPointsPlayed}</td><td>{pct(tournament.statistics.oPointsWon,tournament.statistics.oPointsPlayed)}</td><td>{tournament.statistics.dPointsPlayed}</td><td>{pct(tournament.statistics.dPointsWon,tournament.statistics.dPointsPlayed)}</td><td>{tournament.statistics.completions}</td><td>{pct(tournament.statistics.throwingAttempts - tournament.statistics.passerTurnovers,tournament.statistics.throwingAttempts)}</td><td>{tournament.statistics.receptions}</td><td>{pct(tournament.statistics.receptions,tournament.statistics.receivingTargets)}</td><td>{tournament.statistics.drops}</td><td>{tournament.statistics.touches}</td><td>{tournament.statistics.turnovers}</td><td>{pct(tournament.statistics.turnovers,tournament.statistics.touches)}</td><td>{tournament.statistics.goals}</td><td>{tournament.statistics.assists}</td><td>{tournament.statistics.hockeyAssists}</td><td>{tournament.statistics.blocks}</td><td>{tournament.statistics.plusMinus > 0 ? '+' : ''}{tournament.statistics.plusMinus}</td><td>{duration(tournament.statistics.timeWithDiscMs)}</td>
+        </tr>
+      {/each}
     </tbody></table></div>
   </section>
 
@@ -257,8 +382,26 @@
       <th title="Video links for this player’s attributed actions">Clips</th>
     </tr></thead><tbody>
       {#each sortedGames() as game}
-        <tr class:actions-open={expandedGameTokens.includes(game.token)}>
-          <th><a href={resolve(`/games/${game.token}`)}>{game.title}</a><small>vs {game.opponentName}</small></th>
+        <tr
+          class:actions-open={expandedGameTokens.includes(game.token)}
+          class:scope-excluded={!selectedGameIdSet.has(game.id)}
+        >
+          <th>
+            <div class="scope-cell">
+              <label class="scope-toggle" title={`Include ${game.title} in overall totals`}>
+                <input
+                  type="checkbox"
+                  checked={selectedGameIdSet.has(game.id)}
+                  aria-label={`Include ${game.title} versus ${game.opponentName} in overall totals`}
+                  onchange={(event) => setGameIncluded(game.id, event.currentTarget.checked)}
+                />
+              </label>
+              <span class="scope-copy">
+                <a href={resolve(`/games/${game.token}`)}>{game.title}</a>
+                <small>vs {game.opponentName}</small>
+              </span>
+            </div>
+          </th>
           <td>{game.ourScore}–{game.opponentScore}</td>
           <td>{duration(game.statistics.timePlayedMs)}</td>
           <td>{game.statistics.pointsPlayed}</td>
@@ -346,11 +489,19 @@
   .back-link { display:inline-flex; align-items:center; gap:5px; margin-bottom:10px; color:#596158; font-size:12px; font-weight:650; text-decoration:none; }
   .player-heading { display:flex; align-items:center; gap:11px; margin-bottom:18px; }
   .player-heading > span { display:grid; place-items:center; width:42px; height:42px; border:1px solid #bdd3d6; border-radius:6px; color:#087f9b; background:#edf7f8; }
-  .player-heading h1,.player-heading p,.data-section h2 { margin:0; }
+  .player-heading h1,.player-heading p,.data-section h2,.overall-totals h2,.overall-totals header p { margin:0; }
   .player-heading h1 { font-size:22px; }
   .player-heading p { margin-top:3px; color:#687066; font-size:11px; }
-  .coverage-note { margin:0 0 14px; padding:9px 11px; border:1px solid #d9c98e; color:#655719; background:#fff8dc; font-size:10px; }
-  .totals-grid { display:grid; grid-template-columns:repeat(7,minmax(90px,1fr)); margin-bottom:22px; border:1px solid #cfd5cc; background:#fff; }
+  .overall-totals { margin-bottom:22px; overflow:hidden; border:1px solid #cfd5cc; background:#fff; }
+  .overall-totals > header { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:55px; padding:9px 12px; border-bottom:1px solid #dce1d9; background:#f7f9f6; }
+  .overall-totals h2 { color:#293028; font-size:14px; }
+  .overall-totals header p { margin-top:3px; color:#70786e; font-size:10px; }
+  .selection-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; }
+  .selection-actions button { min-height:34px; padding:0 10px; border:1px solid #bfc8bc; border-radius:4px; color:#4d574b; background:#fff; font-size:10px; font-weight:700; cursor:pointer; }
+  .selection-actions button:hover:not(:disabled) { border-color:#8f9b8d; background:#f5f8f4; }
+  .selection-actions button:disabled { color:#9da49a; background:#f3f5f2; cursor:not-allowed; }
+  .coverage-note { margin:0; padding:9px 11px; border-bottom:1px solid #d9c98e; color:#655719; background:#fff8dc; font-size:10px; }
+  .totals-grid { display:grid; grid-template-columns:repeat(7,minmax(90px,1fr)); background:#fff; }
   .totals-grid div { display:grid; gap:5px; padding:11px; border-left:1px solid #e0e4de; }
   .totals-grid div:first-child { border-left:0; }
   .totals-grid div:nth-child(n+8) { border-top:1px solid #e0e4de; }
@@ -373,6 +524,14 @@
   tbody tr:hover > * { background:#f8faf7; }
   tbody th a { display:block; color:#087f9b; text-decoration:none; }
   tbody th small { display:block; margin-top:2px; color:#777f75; font-weight:400; }
+  .scope-cell { display:flex; align-items:center; gap:4px; min-width:0; }
+  .scope-toggle { display:grid; flex:0 0 34px; place-items:center; width:34px; height:34px; margin:-4px 0 -4px -6px; cursor:pointer; }
+  .scope-toggle.disabled { cursor:not-allowed; }
+  .scope-toggle input { width:17px; height:17px; margin:0; accent-color:#087f9b; cursor:pointer; }
+  .scope-toggle input:disabled { cursor:not-allowed; }
+  .scope-copy { display:block; min-width:0; }
+  tr.scope-excluded > td { color:#9aa198; }
+  tr.scope-excluded .scope-copy { opacity:.55; }
   .clip-toggle { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:45px; min-height:25px; padding:0 6px; border:1px solid #cad1c7; border-radius:4px; color:#4f5a4d; background:#f8faf7; font-size:9px; font-weight:750; cursor:pointer; }
   .clip-toggle :global(svg) { transition:transform 120ms ease; }
   .clip-toggle.open :global(svg) { transform:rotate(180deg); }
@@ -403,5 +562,5 @@
   .clip-list time { color:#687268; font:9px ui-monospace,monospace; }
   @media(max-width:900px){.totals-grid{grid-template-columns:repeat(3,1fr)}.totals-grid div{border-top:1px solid #e0e4de;border-left:1px solid #e0e4de}.totals-grid div:nth-child(3n+1){border-left:0}.totals-grid div:nth-child(-n+3){border-top:0}}
   @media(max-width:680px){.action-reel{grid-template-columns:1fr}}
-  @media(max-width:520px){.player-page{width:calc(100% - 18px)}}
+  @media(max-width:520px){.player-page{width:calc(100% - 18px)}.overall-totals > header{align-items:flex-start;flex-direction:column}.selection-actions{width:100%;justify-content:stretch}.selection-actions button{flex:1;min-height:44px}.scope-toggle{flex-basis:44px;width:44px;height:44px;margin:-8px 0 -8px -7px}}
 </style>
