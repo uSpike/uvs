@@ -362,6 +362,7 @@
     <header><h2>Games</h2></header>
     <div class="table-scroll"><table><thead><tr>
       {@render gameHeader('title', 'Game', 'Game title', 'text')}
+      <th title="Include this game in overall totals">Include</th>
       {@render gameHeader('scoreDifferential', 'Score', statHelp.score, 'number')}
       {@render gameHeader('timePlayedMs', 'Time', statHelp.timePlayed, 'number')}
       {@render gameHeader('pointsPlayed', 'Pts', statHelp.pointsPlayed, 'number')}
@@ -387,21 +388,21 @@
           class:scope-excluded={!selectedGameIdSet.has(game.id)}
         >
           <th>
-            <div class="scope-cell">
-              <label class="scope-toggle" title={`Include ${game.title} in overall totals`}>
-                <input
-                  type="checkbox"
-                  checked={selectedGameIdSet.has(game.id)}
-                  aria-label={`Include ${game.title} versus ${game.opponentName} in overall totals`}
-                  onchange={(event) => setGameIncluded(game.id, event.currentTarget.checked)}
-                />
-              </label>
-              <span class="scope-copy">
-                <a href={resolve(`/games/${game.token}`)}>{game.title}</a>
-                <small>vs {game.opponentName}</small>
-              </span>
-            </div>
+            <span class="scope-copy">
+              <a href={resolve(`/games/${game.token}`)}>{game.title}</a>
+              <small>vs {game.opponentName}</small>
+            </span>
           </th>
+          <td class="game-include-cell">
+            <label title={`Include ${game.title} in overall totals`}>
+              <input
+                type="checkbox"
+                checked={selectedGameIdSet.has(game.id)}
+                aria-label={`Include ${game.title} versus ${game.opponentName} in overall totals`}
+                onchange={(event) => setGameIncluded(game.id, event.currentTarget.checked)}
+              />
+            </label>
+          </td>
           <td>{game.ourScore}–{game.opponentScore}</td>
           <td>{duration(game.statistics.timePlayedMs)}</td>
           <td>{game.statistics.pointsPlayed}</td>
@@ -435,7 +436,7 @@
         </tr>
         {#if expandedGameTokens.includes(game.token)}
           <tr class="action-reel-row">
-            <td colspan="19">
+            <td colspan="20">
               <div class="action-reel">
                 <section class="highlight-clips">
                   <header>
@@ -530,6 +531,9 @@
   .scope-toggle input { width:17px; height:17px; margin:0; accent-color:#087f9b; cursor:pointer; }
   .scope-toggle input:disabled { cursor:not-allowed; }
   .scope-copy { display:block; min-width:0; }
+  .game-include-cell { padding:0; text-align:center; }
+  .game-include-cell label { display:grid; place-items:center; min-width:36px; min-height:36px; cursor:pointer; }
+  .game-include-cell input { width:17px; height:17px; margin:0; accent-color:#087f9b; cursor:pointer; }
   tr.scope-excluded > td { color:#9aa198; }
   tr.scope-excluded .scope-copy { opacity:.55; }
   .clip-toggle { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:45px; min-height:25px; padding:0 6px; border:1px solid #cad1c7; border-radius:4px; color:#4f5a4d; background:#f8faf7; font-size:9px; font-weight:750; cursor:pointer; }
@@ -562,5 +566,5 @@
   .clip-list time { color:#687268; font:9px ui-monospace,monospace; }
   @media(max-width:900px){.totals-grid{grid-template-columns:repeat(3,1fr)}.totals-grid div{border-top:1px solid #e0e4de;border-left:1px solid #e0e4de}.totals-grid div:nth-child(3n+1){border-left:0}.totals-grid div:nth-child(-n+3){border-top:0}}
   @media(max-width:680px){.action-reel{grid-template-columns:1fr}}
-  @media(max-width:520px){.player-page{width:calc(100% - 18px)}.overall-totals > header{align-items:flex-start;flex-direction:column}.selection-actions{width:100%;justify-content:stretch}.selection-actions button{flex:1;min-height:44px}.scope-toggle{flex-basis:44px;width:44px;height:44px;margin:-8px 0 -8px -7px}}
+  @media(max-width:520px){.player-page{width:calc(100% - 18px)}.overall-totals > header{align-items:flex-start;flex-direction:column}.selection-actions{width:100%;justify-content:stretch}.selection-actions button{flex:1;min-height:44px}.scope-toggle{flex-basis:44px;width:44px;height:44px;margin:-8px 0 -8px -7px}.game-include-cell label{min-width:44px;min-height:44px}}
 </style>

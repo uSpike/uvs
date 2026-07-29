@@ -96,16 +96,6 @@
         : [...excludedGameIds, gameId];
   }
 
-  function includeAllGames(): void {
-    excludedGameIds = [];
-  }
-
-  function excludeAllGames(): void {
-    excludedGameIds = data.games
-      .filter((game) => game.statistics !== null)
-      .map((game) => game.id);
-  }
-
   function togglePlayerSort(key: PlayerSortKey, kind: 'text' | 'number'): void {
     if (playerSortKey === key) {
       playerSortDirection = playerSortDirection === 'ascending' ? 'descending' : 'ascending';
@@ -492,13 +482,39 @@
   <section class="stats-section">
     <header><h2>Games</h2></header>
     <div class="game-list">
+      <div class="game-list-heading" aria-hidden="true">
+        <span>Include</span>
+      </div>
       {#each data.games as game}
-        <details id={`game-${game.token}`} class="game-disclosure" open={data.focusedGameToken === game.token}>
+        <details
+          id={`game-${game.token}`}
+          class="game-disclosure"
+          class:scope-excluded={game.statistics !== null && !gameIncludedInTotals(game.id)}
+          open={data.focusedGameToken === game.token}
+        >
           <summary>
             <span class="play">{#if game.hasVideo}<Play size={14} fill="currentColor" />{:else}<ClipboardList size={14} />{/if}</span>
             <span class="game-name"><strong>{game.title}</strong><small>vs {game.opponentName}</small></span>
             <time datetime={game.playedAt ?? game.createdAt}>{new Date(game.playedAt ?? game.createdAt).toLocaleDateString()}</time>
             <b title={statHelp.score}>{game.ourScore}–{game.opponentScore}</b>
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the nested checkbox provides keyboard interaction; stopping the label click keeps the disclosure closed) -->
+            <label
+              class="game-include-toggle"
+              class:disabled={game.statistics === null}
+              title={game.statistics === null
+                ? 'Statistics are unavailable for this game'
+                : `Include ${game.title} in event totals`}
+              onclick={(event) => event.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={game.statistics !== null && gameIncludedInTotals(game.id)}
+                disabled={game.statistics === null}
+                aria-label={`Include ${game.title} versus ${game.opponentName} in event totals`}
+                onchange={(event) =>
+                  setGameIncludedInTotals(game.id, event.currentTarget.checked)}
+              />
+            </label>
             <span class="disclosure-chevron"><ChevronDown size={16} aria-hidden="true" /></span>
           </summary>
           <div class="game-breakdown">
@@ -545,51 +561,6 @@
       <span class="disclosure-chevron"><ChevronDown size={16} aria-hidden="true" /></span>
     </summary>
     <div class="event-breakdown">
-      <fieldset class="totals-game-selector">
-        <legend>Games included in event totals</legend>
-        <div class="totals-selector-heading">
-          <span aria-live="polite">
-            {includedGameCount} of {availableGameCount} available
-            {availableGameCount === 1 ? 'game' : 'games'} included
-          </span>
-          <div>
-            <button
-              type="button"
-              disabled={includedGameCount === availableGameCount}
-              onclick={includeAllGames}
-            >Include all</button>
-            <button
-              type="button"
-              disabled={includedGameCount === 0}
-              onclick={excludeAllGames}
-            >Exclude all</button>
-          </div>
-        </div>
-        <div class="totals-game-options">
-          {#each data.games as game}
-            <label class:unavailable={game.statistics === null}>
-              <input
-                type="checkbox"
-                checked={game.statistics !== null && gameIncludedInTotals(game.id)}
-                disabled={game.statistics === null}
-                aria-label={`Include ${game.title} versus ${game.opponentName} in event totals`}
-                onchange={(event) =>
-                  setGameIncludedInTotals(game.id, event.currentTarget.checked)}
-              />
-              <span>
-                <strong>{game.title}</strong>
-                <small>
-                  vs {game.opponentName} ·
-                  {game.statistics === null
-                    ? 'statistics unavailable'
-                    : `${game.ourScore}–${game.opponentScore}`}
-                </small>
-              </span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
-
       {#if includedGameCount === 0}
         <p class="event-stat-empty">Include at least one game to view event totals.</p>
       {:else}
@@ -620,9 +591,11 @@
   .stats-section h2 { font-size:14px; }
   .stats-section header span { color:#747c72; font-size:10px; }
   .game-list { display:grid; }
+  .game-list-heading { display:grid; grid-template-columns:30px minmax(0,1fr) 100px 48px 58px 20px; align-items:center; gap:9px; min-height:27px; padding:3px 12px; border-bottom:1px solid #e3e6e1; color:#747c72; background:#fbfcfa; font-size:8px; font-weight:700; text-transform:uppercase; }
+  .game-list-heading span { grid-column:5; justify-self:center; }
   .game-disclosure { border-top:1px solid #e3e6e1; }
-  .game-disclosure:first-child { border-top:0; }
-  .game-disclosure > summary { display:grid; grid-template-columns:30px minmax(0,1fr) 100px 48px 20px; align-items:center; gap:9px; min-height:52px; padding:7px 12px; cursor:pointer; list-style:none; }
+  .game-disclosure:first-of-type { border-top:0; }
+  .game-disclosure > summary { display:grid; grid-template-columns:30px minmax(0,1fr) 100px 48px 58px 20px; align-items:center; gap:9px; min-height:52px; padding:7px 12px; cursor:pointer; list-style:none; }
   .game-disclosure > summary::-webkit-details-marker { display:none; }
   .game-disclosure > summary:hover { background:#f8faf7; }
   .game-disclosure[open] > summary { border-bottom:1px solid #d9ded7; background:#f5f8f4; }
@@ -631,6 +604,14 @@
   .game-list strong { color:#2d332c; font-size:12px; }
   .game-list small,.game-list time { color:#747c72; font-size:10px; }
   .game-list b { color:#20241f; font-size:14px; text-align:right; }
+  .game-include-toggle { display:grid; place-items:center; width:100%; min-height:40px; cursor:pointer; }
+  .game-include-toggle.disabled { cursor:not-allowed; opacity:.5; }
+  .game-include-toggle input { width:17px; height:17px; margin:0; accent-color:#087f9b; cursor:pointer; }
+  .game-include-toggle input:disabled { cursor:not-allowed; }
+  .game-disclosure.scope-excluded > summary .play,
+  .game-disclosure.scope-excluded > summary .game-name,
+  .game-disclosure.scope-excluded > summary time,
+  .game-disclosure.scope-excluded > summary b { opacity:.5; }
   .disclosure-chevron { display:grid; place-items:center; color:#778075; transition:transform 120ms ease; }
   .game-disclosure[open] .disclosure-chevron,.event-disclosure[open] .disclosure-chevron { transform:rotate(180deg); }
   .game-breakdown { padding:12px; background:#f1f3ef; }
@@ -654,23 +635,6 @@
   .event-breakdown { padding:12px; background:#f1f3ef; }
   .event-breakdown > .stats-section { margin-bottom:12px; }
   .event-breakdown > .stats-section:last-child { margin-bottom:0; }
-  .totals-game-selector { min-width:0; margin:0 0 12px; padding:0; border:1px solid #cfd8cf; background:#fff; }
-  .totals-game-selector legend { padding:0 5px; color:#4f574d; font-size:10px; font-weight:760; text-transform:uppercase; letter-spacing:.04em; }
-  .totals-selector-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:42px; padding:6px 9px; border-bottom:1px solid #e0e5de; background:#f8faf7; }
-  .totals-selector-heading > span { color:#687066; font-size:10px; }
-  .totals-selector-heading > div { display:flex; gap:6px; }
-  .totals-selector-heading button { min-height:30px; padding:0 8px; border:1px solid #c1ccc0; border-radius:4px; color:#4e594c; background:#fff; font-size:9px; font-weight:700; cursor:pointer; }
-  .totals-selector-heading button:hover:not(:disabled) { border-color:#8fa08d; background:#f3f7f2; }
-  .totals-selector-heading button:disabled { cursor:not-allowed; opacity:.45; }
-  .totals-game-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); }
-  .totals-game-options label { display:flex; align-items:center; gap:8px; min-height:46px; padding:6px 9px; border-top:1px solid #edf0eb; cursor:pointer; }
-  .totals-game-options label:hover { background:#f8faf7; }
-  .totals-game-options label.unavailable { cursor:not-allowed; opacity:.55; }
-  .totals-game-options input { flex:0 0 auto; width:16px; height:16px; accent-color:#087f9b; }
-  .totals-game-options label > span { display:grid; gap:2px; min-width:0; }
-  .totals-game-options strong,.totals-game-options small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .totals-game-options strong { font-size:10px; }
-  .totals-game-options small { font-size:9px; }
   .event-coverage-note { margin:0 0 12px; }
   .event-stat-empty { margin:0; padding:24px 12px; border:1px dashed #c9cec6; color:#747c72; background:#fff; font-size:11px; text-align:center; }
   .matchup-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:12px; }
@@ -703,5 +667,5 @@
   tbody td a { color:#087f9b; text-decoration:none; }
   .empty-table-row td { height:48px; color:#858d82; background:#fff; font-size:10px; text-align:center; }
   @media(max-width:680px){.team-summary{grid-template-columns:repeat(2,1fr)}.team-summary > div:nth-child(odd){border-left:0}.team-summary > div:nth-child(n+3){border-top:1px solid #e3e6e1}}
-  @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 18px}.game-list time{display:none}.event-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 18px}.event-included-count{display:none}.event-breakdown{padding:8px}.totals-selector-heading{align-items:flex-start;flex-direction:column}.totals-selector-heading button{min-height:40px}.totals-game-options{grid-template-columns:1fr}.totals-game-options label{min-height:48px}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}.game-breakdown-actions > div{align-items:flex-start;flex-direction:column}}
+  @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.game-list-heading,.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 58px 18px}.game-list-heading span{grid-column:4}.game-list time{display:none}.game-include-toggle{min-height:44px}.event-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 18px}.event-included-count{display:none}.event-breakdown{padding:8px}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}.game-breakdown-actions > div{align-items:flex-start;flex-direction:column}}
 </style>
