@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { ArrowLeft, BarChart3, ChevronDown, ClipboardList, ExternalLink, Play } from '@lucide/svelte';
+  import { ArrowLeft, BarChart3, ChevronDown, ClipboardList, Download, ExternalLink, FileJson, Play } from '@lucide/svelte';
   import { invalidateAll } from '$app/navigation';
-  import { resolve } from '$app/paths';
+  import { base, resolve } from '$app/paths';
   import GamePaperStatsDialog from '$lib/GamePaperStatsDialog.svelte';
   import GameStatsTransferControl from '$lib/GameStatsTransferControl.svelte';
   import { mergeGameStatistics } from '$lib/game-stats';
@@ -43,6 +43,17 @@
   let connectionSortKey = $state<ConnectionSortKey | null>(null);
   let connectionSortDirection = $state<TableSortDirection>('ascending');
   let excludedGameIds = $state<number[]>([]);
+  let includedGameIds = $derived(
+    data.games
+      .filter((game) => game.statistics !== null && !excludedGameIds.includes(game.id))
+      .map((game) => game.id),
+  );
+  let eventAnalysisExportHref = $derived(
+    `${base}/api/teams/${data.tournament.teamSlug}/tournaments/${data.tournament.id}/analysis-export?games=${includedGameIds.join(',')}`,
+  );
+  let eventAnalysisMarkdownExportHref = $derived(
+    `${eventAnalysisExportHref}&format=markdown`,
+  );
   let availableGameCount = $derived(
     data.games.filter((game) => game.statistics !== null).length,
   );
@@ -468,7 +479,54 @@
   <a class="back-link" href={resolve(`/teams/${data.tournament.teamSlug}`)}><ArrowLeft size={15} />{data.tournament.teamName}</a>
   <header class="stats-heading">
     <div><h1>{data.tournament.name}</h1><p>{data.tournament.seasonRosterName} · {data.games.length} {data.games.length === 1 ? 'game' : 'games'}</p></div>
-    <BarChart3 size={24} aria-hidden="true" />
+    <div class="stats-heading-actions" aria-label="AI analysis exports">
+      <div class="analysis-export-group">
+        {#if includedGameCount > 0}
+          <a
+            class="brief-export"
+            href={eventAnalysisMarkdownExportHref}
+            download
+            aria-label={`Download compact AI brief Markdown with player names for ${includedGameCount} selected ${includedGameCount === 1 ? 'game' : 'games'} in ${data.tournament.name}`}
+            title="Download compact Markdown to paste into chat. Includes player names."
+          ><Download size={13} aria-hidden="true" />Event AI brief</a>
+          <a
+            class="json-export"
+            href={eventAnalysisExportHref}
+            download
+            aria-label={`Download full AI analysis JSON with player names for ${includedGameCount} selected ${includedGameCount === 1 ? 'game' : 'games'} in ${data.tournament.name}`}
+            title="Download complete event-level analysis data for the selected games. Includes player names."
+          ><FileJson size={12} aria-hidden="true" />JSON</a>
+        {:else}
+          <span
+            class="disabled-export"
+            aria-disabled="true"
+            title="Include at least one game to export"
+          ><Download size={13} aria-hidden="true" />Event AI brief</span>
+          <span
+            class="disabled-export json-export"
+            aria-disabled="true"
+            title="Include at least one game to export"
+          ><FileJson size={12} aria-hidden="true" />JSON</span>
+        {/if}
+      </div>
+      <div class="analysis-export-group">
+        <a
+          class="brief-export"
+          href={`${base}/api/teams/${data.tournament.teamSlug}/seasons/${data.rosterId}/analysis-export?format=markdown`}
+          download
+          aria-label={`Download compact AI brief Markdown with player names for ${data.tournament.seasonRosterName}`}
+          title="Download compact Markdown to paste into chat. Includes player names."
+        ><Download size={13} aria-hidden="true" />Season AI brief</a>
+        <a
+          class="json-export"
+          href={`${base}/api/teams/${data.tournament.teamSlug}/seasons/${data.rosterId}/analysis-export`}
+          download
+          aria-label={`Download full AI analysis JSON with player names for ${data.tournament.seasonRosterName}`}
+          title="Download complete event-level analysis data for all season games. Includes player names."
+        ><FileJson size={12} aria-hidden="true" />JSON</a>
+      </div>
+      <BarChart3 size={24} aria-hidden="true" />
+    </div>
   </header>
 
   <nav class="stats-tabs" aria-label="Statistics view">
@@ -581,6 +639,12 @@
   .stats-heading h1 { font-size:22px; }
   .stats-heading p { margin-top:4px; color:#687066; font-size:12px; }
   .stats-heading :global(svg) { color:#087f9b; }
+  .stats-heading-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; flex-wrap:wrap; }
+  .analysis-export-group { display:flex; align-items:center; gap:3px; }
+  .stats-heading-actions a,.stats-heading-actions .disabled-export { display:inline-flex; align-items:center; gap:4px; min-height:29px; padding:0 8px; border:1px solid #b9cfd3; border-radius:4px; color:#176174; background:#f0f8f9; font-size:10px; font-weight:700; text-decoration:none; white-space:nowrap; }
+  .stats-heading-actions a:hover { border-color:#7ca8b1; background:#e6f2f4; }
+  .stats-heading-actions .disabled-export { color:#7b898b; border-color:#d6dedf; background:#f4f6f6; cursor:not-allowed; }
+  .stats-heading-actions .json-export { min-height:25px; padding-inline:6px; border-color:#cad6d7; color:#587176; background:transparent; font-size:9px; }
   .coverage-note { margin:-7px 0 15px; padding:9px 11px; border:1px solid #d9c98e; color:#655719; background:#fff8dc; font-size:10px; }
   .stats-tabs { display:flex; gap:3px; margin:0 0 16px; padding:3px; overflow:auto; border:1px solid #cfd5cc; border-radius:6px; background:#eef1ec; }
   .stats-tabs button { flex:1 0 auto; min-height:34px; padding:6px 14px; border:0; border-radius:4px; color:#5d655b; background:transparent; font-size:11px; font-weight:720; cursor:pointer; }
@@ -667,5 +731,5 @@
   tbody td a { color:#087f9b; text-decoration:none; }
   .empty-table-row td { height:48px; color:#858d82; background:#fff; font-size:10px; text-align:center; }
   @media(max-width:680px){.team-summary{grid-template-columns:repeat(2,1fr)}.team-summary > div:nth-child(odd){border-left:0}.team-summary > div:nth-child(n+3){border-top:1px solid #e3e6e1}}
-  @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.game-list-heading,.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 58px 18px}.game-list-heading span{grid-column:4}.game-list time{display:none}.game-include-toggle{min-height:44px}.event-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 18px}.event-included-count{display:none}.event-breakdown{padding:8px}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}.game-breakdown-actions > div{align-items:flex-start;flex-direction:column}}
+  @media(max-width:560px){.stats-page{width:calc(100% - 18px)}.stats-heading{align-items:flex-start;gap:10px;flex-direction:column}.stats-heading-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}.stats-heading-actions > :global(svg){display:none}.game-list-heading,.game-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 42px 58px 18px}.game-list-heading span{grid-column:4}.game-list time{display:none}.game-include-toggle{min-height:44px}.event-disclosure > summary{grid-template-columns:30px minmax(0,1fr) 18px}.event-included-count{display:none}.event-breakdown{padding:8px}.matchup-summary{grid-template-columns:1fr}.game-breakdown{padding:8px}.game-breakdown-actions{align-items:flex-start;flex-direction:column}.game-breakdown-actions > div{align-items:flex-start;flex-direction:column}}
 </style>

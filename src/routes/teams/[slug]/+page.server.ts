@@ -14,6 +14,10 @@ export const load: PageServerLoad = ({ params }) => {
   return {
     team,
     tournaments: setup?.tournaments ?? [],
+    seasonRosters: (setup?.rosters ?? []).map((roster) => ({
+      id: roster.id,
+      name: roster.name,
+    })),
     scores: Object.fromEntries(
       team.games.map((game) => {
         const stats = tracking.getSnapshot(game.token)?.statistics;

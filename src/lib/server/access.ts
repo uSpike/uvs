@@ -6,6 +6,12 @@ export function canAccessTeam(locals: App.Locals, teamId: number): boolean {
   return locals.role === 'admin' || (locals.role === 'player' && locals.teamId === teamId);
 }
 
+/** Enforce one team's private-content boundary for team-scoped API routes. */
+export function requireTeamAccess(locals: App.Locals, teamId: number): void {
+  if (locals.role === 'guest') error(401, 'Sign in to access this team.');
+  if (!canAccessTeam(locals, teamId)) error(403, 'This content belongs to another team.');
+}
+
 /** Load a game and enforce its team boundary for private pages and APIs. */
 export function requireGameAccess(locals: App.Locals, token: string): GameViewRecord {
   const game = new CatalogRepository().getGameViewByToken(token);

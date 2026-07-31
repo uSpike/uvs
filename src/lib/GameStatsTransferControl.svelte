@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
-  import { Download, FileJson, Upload } from '@lucide/svelte';
+  import { base, resolve } from '$app/paths';
+  import { Download, FileJson, FileText, Upload } from '@lucide/svelte';
   import { MAX_GAME_STATISTICS_EXPORT_BYTES } from './game-stat-transfer';
 
   let {
@@ -118,22 +118,44 @@
   </summary>
   <div class="stats-transfer-popover">
     <div>
-      <strong>Game statistics</strong>
-      <small>Back up or restore points, actions, highlights, and paper stats.</small>
+      <strong>Game data</strong>
+      <small>Back up editable data or download a read-only analysis file.</small>
     </div>
+    <a
+      class="stats-transfer-action analysis"
+      href={`${base}/api/games/${token}/analysis-export?format=markdown`}
+      download
+    >
+      <FileText size={15} aria-hidden="true" />
+      <span>
+        <b>AI brief (.md)</b>
+        <small>Compact Markdown to paste directly into chat. Includes player names.</small>
+      </span>
+    </a>
+    <a
+      class="stats-transfer-action"
+      href={`${base}/api/games/${token}/analysis-export`}
+      download
+    >
+      <FileJson size={15} aria-hidden="true" />
+      <span>
+        <b>Full analysis JSON</b>
+        <small>Complete event-level analysis data. Includes player names.</small>
+      </span>
+    </a>
     <a
       class="stats-transfer-action"
       href={resolve(`/api/games/${token}/stats-transfer`)}
       download
     >
       <Download size={15} aria-hidden="true" />
-      <span><b>Export stats</b><small>Download a portable UVS JSON file.</small></span>
+      <span><b>Download backup</b><small>Portable UVS JSON for restoring this game.</small></span>
     </a>
     <label class:disabled={importing} class="stats-transfer-action">
       <Upload size={15} aria-hidden="true" />
       <span>
-        <b>{importing ? 'Importing…' : 'Import stats'}</b>
-        <small>Replace this game’s stats from a UVS JSON file.</small>
+        <b>{importing ? 'Restoring…' : 'Restore backup'}</b>
+        <small>Replace this game’s data from a UVS backup file.</small>
       </span>
       <input
         type="file"
@@ -202,6 +224,8 @@
     cursor:pointer;
   }
   .stats-transfer-action:hover { border-color:#9eaa9b; background:#eef2ec; }
+  .stats-transfer-action.analysis { border-color:#b9d7dc; color:#174f5b; background:#eef8fa; }
+  .stats-transfer-action.analysis:hover { border-color:#75aeb9; background:#e2f2f5; }
   .stats-transfer-action > span { display:grid; gap:2px; }
   .stats-transfer-action b { font-size:11px; }
   .stats-transfer-action input {

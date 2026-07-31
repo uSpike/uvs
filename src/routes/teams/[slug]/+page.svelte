@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ArrowLeft, Pencil, Play, Video } from '@lucide/svelte';
-  import { resolve } from '$app/paths';
+  import { ArrowLeft, Download, FileJson, FileText, Pencil, Play, Video } from '@lucide/svelte';
+  import { base, resolve } from '$app/paths';
 
   let { data } = $props();
 </script>
@@ -20,6 +20,35 @@
       <a class="edit-command" href={resolve(`/admin/teams/${data.team.slug}`)}><Pencil size={14} aria-hidden="true" />Edit team</a>
     {/if}
   </header>
+
+  {#if data.seasonRosters.length > 0}
+    <nav class="season-export-bar" aria-label="Season AI analysis exports">
+      <span>
+        <FileText size={16} aria-hidden="true" />
+        <strong>AI stats exports</strong>
+        <small>Markdown to paste into chat · full JSON available · includes player names</small>
+      </span>
+      <div class="season-export-list">
+        {#each data.seasonRosters as roster}
+          <div class="season-export-options">
+            <b>{roster.name}</b>
+            <a
+              class="brief-export"
+              href={`${base}/api/teams/${data.team.slug}/seasons/${roster.id}/analysis-export?format=markdown`}
+              download
+              aria-label={`Download compact AI brief Markdown with player names for ${roster.name}`}
+            ><Download size={13} aria-hidden="true" />AI brief</a>
+            <a
+              class="json-export"
+              href={`${base}/api/teams/${data.team.slug}/seasons/${roster.id}/analysis-export`}
+              download
+              aria-label={`Download full AI analysis JSON with player names for ${roster.name}`}
+            ><FileJson size={13} aria-hidden="true" />JSON</a>
+          </div>
+        {/each}
+      </div>
+    </nav>
+  {/if}
 
   {#if data.tournaments.length === 0}
     <div class="games-empty">
@@ -114,6 +143,88 @@
   .page-heading p { margin: 0; }
 
   .page-heading p { margin-top: 3px; }
+
+  .season-export-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 48px;
+    margin: -6px 0 18px;
+    padding: 7px 9px 7px 12px;
+    border: 1px solid #c3d7da;
+    border-radius: 5px;
+    color: #254f58;
+    background: #f1f8f9;
+  }
+
+  .season-export-bar > span {
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: start;
+    gap: 1px 6px;
+  }
+
+  .season-export-bar > span :global(svg) {
+    grid-row: 1 / span 2;
+    color: #087f9b;
+  }
+
+  .season-export-bar strong { font-size: 11px; }
+  .season-export-bar small { color: #61777b; font-size: 9px; }
+
+  .season-export-bar > .season-export-list {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .season-export-options {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .season-export-options b {
+    margin-right: 2px;
+    color: #47656b;
+    font-size: 10px;
+  }
+
+  .season-export-bar a {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 29px;
+    padding: 0 8px;
+    border: 1px solid #a9c5ca;
+    border-radius: 4px;
+    color: #176174;
+    background: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .season-export-bar a.brief-export {
+    border-color: #77aab4;
+    color: #105a6b;
+    background: #fff;
+  }
+
+  .season-export-bar a.json-export {
+    min-height: 27px;
+    padding-inline: 6px;
+    border-color: #c4d1d3;
+    color: #557075;
+    background: transparent;
+    font-size: 9px;
+  }
+
+  .season-export-bar a:hover { border-color: #6f9fa8; background: #e8f3f5; }
 
   .edit-command {
     display: inline-flex;
@@ -302,5 +413,7 @@
 
     .tournament-group > header { align-items: flex-start; }
     .tournament-actions { align-items: flex-end; flex-direction: column; }
+    .season-export-bar { align-items: flex-start; flex-direction: column; }
+    .season-export-bar > .season-export-list { justify-content: flex-start; }
   }
 </style>
