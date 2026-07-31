@@ -3,6 +3,8 @@ import {
   doubleTapSeekSeconds,
   pointerDistance,
   pointerMidpoint,
+  timelineRangeAtSeconds,
+  timelineTimeAtClientX,
   zoomDirectionForKey,
   type ViewportTouchTap,
 } from './viewer-input';
@@ -37,6 +39,57 @@ describe('viewer pointer geometry', () => {
       { clientX: -5, clientY: 2.5 },
       { clientX: 8, clientY: -7.5 },
     )).toEqual({ clientX: 1.5, clientY: -2.5 });
+  });
+});
+
+describe('timeline hover geometry', () => {
+  it('maps the pointer across the timeline to media time', () => {
+    expect(timelineTimeAtClientX(100, 100, 400, 120)).toBe(0);
+    expect(timelineTimeAtClientX(300, 100, 400, 120)).toBe(60);
+    expect(timelineTimeAtClientX(500, 100, 400, 120)).toBe(120);
+  });
+
+  it('clamps pointers outside the timeline bounds', () => {
+    expect(timelineTimeAtClientX(20, 100, 400, 120)).toBe(0);
+    expect(timelineTimeAtClientX(700, 100, 400, 120)).toBe(120);
+  });
+
+  it('rejects invalid timeline geometry and duration', () => {
+    expect(timelineTimeAtClientX(100, 100, 0, 120)).toBeNull();
+    expect(timelineTimeAtClientX(100, 100, 400, 0)).toBeNull();
+    expect(timelineTimeAtClientX(Number.NaN, 100, 400, 120)).toBeNull();
+  });
+});
+
+describe('timeline range selection', () => {
+  const ranges = [
+    { label: 'Point 1', startTimeMs: 1_000, endTimeMs: 2_000 },
+    { label: 'Point 2', startTimeMs: 2_000, endTimeMs: 3_000 },
+    { label: 'Point 3', startTimeMs: 4_000, endTimeMs: 5_000 },
+  ];
+
+  it('selects the point containing the hovered media time', () => {
+    expect(timelineRangeAtSeconds(ranges, 1.5)?.label).toBe('Point 1');
+    expect(timelineRangeAtSeconds(ranges, 2.5)?.label).toBe('Point 2');
+    expect(timelineRangeAtSeconds(ranges, 4)?.label).toBe('Point 3');
+  });
+
+  it('uses the later point when two ranges share a boundary', () => {
+    expect(timelineRangeAtSeconds(ranges, 2)?.label).toBe('Point 2');
+  });
+
+  it('returns no point before, after, or between ranges', () => {
+    expect(timelineRangeAtSeconds(ranges, 0.5)).toBeNull();
+    expect(timelineRangeAtSeconds(ranges, 3.5)).toBeNull();
+    expect(timelineRangeAtSeconds(ranges, 5.001)).toBeNull();
+  });
+
+  it('ignores invalid ranges and non-finite times', () => {
+    expect(timelineRangeAtSeconds([
+      { startTimeMs: Number.NaN, endTimeMs: 1_000 },
+      { startTimeMs: 2_000, endTimeMs: 1_000 },
+    ], 1)).toBeNull();
+    expect(timelineRangeAtSeconds(ranges, Number.POSITIVE_INFINITY)).toBeNull();
   });
 });
 

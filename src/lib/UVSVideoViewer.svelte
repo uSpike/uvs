@@ -68,6 +68,8 @@
     doubleTapSeekSeconds,
     pointerDistance,
     pointerMidpoint,
+    timelineRangeAtSeconds,
+    timelineTimeAtClientX,
     zoomDirectionForKey,
     type ViewerPointerPoint,
     type ViewportTouchTap,
@@ -270,6 +272,7 @@
   let externalSourceActive = false;
   let pendingInitialTime: number | null = null;
   let timelinePointerActive = false;
+  let timelineHoverActive = false;
   let timelineInteractionVisible = false;
   let timelineInteractionTime = 0;
   let timelineInteractionHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -315,7 +318,10 @@
   $: currentFrame = timeline
     ? frameIndexAtTime(currentTime, duration, timeline.lastFrameIndex)
     : 0;
-  $: timelineInteractionSection = timelineSectionAtSeconds(timelineInteractionTime);
+  $: timelineInteractionSection = timelineRangeAtSeconds(
+    timelineSections,
+    timelineInteractionTime,
+  );
   $: timelineInteractionLeftPercent = duration > 0
     ? Math.min(96, Math.max(4, (timelineInteractionTime / duration) * 100))
     : 4;
@@ -932,12 +938,37 @@
 
   function beginTimelineInteraction(event: PointerEvent): void {
     timelinePointerActive = true;
-    showTimelineInteraction(Number((event.currentTarget as HTMLInputElement).value));
+    previewTimelineAtPointer(event);
   }
 
   function endTimelineInteraction(): void {
     timelinePointerActive = false;
+    if (!timelineHoverActive) scheduleTimelineInteractionHide();
+  }
+
+  function cancelTimelineInteraction(): void {
+    timelinePointerActive = false;
+    timelineHoverActive = false;
     scheduleTimelineInteractionHide();
+  }
+
+  function previewTimelineAtPointer(event: PointerEvent): void {
+    const timelineInput = event.currentTarget as HTMLInputElement;
+    const bounds = timelineInput.getBoundingClientRect();
+    const timeSeconds = timelineTimeAtClientX(
+      event.clientX,
+      bounds.left,
+      bounds.width,
+      duration,
+    );
+    if (timeSeconds === null) return;
+    timelineHoverActive = event.pointerType === 'mouse';
+    showTimelineInteraction(timeSeconds);
+  }
+
+  function leaveTimelinePreview(event: PointerEvent): void {
+    if (event.pointerType === 'mouse') timelineHoverActive = false;
+    if (!timelinePointerActive) scheduleTimelineInteractionHide();
   }
 
   function showTimelineInteraction(timeSeconds: number): void {
@@ -947,7 +978,7 @@
       clearTimeout(timelineInteractionHideTimer);
       timelineInteractionHideTimer = null;
     }
-    if (!timelinePointerActive) scheduleTimelineInteractionHide();
+    if (!timelinePointerActive && !timelineHoverActive) scheduleTimelineInteractionHide();
   }
 
   function scheduleTimelineInteractionHide(): void {
@@ -956,15 +987,6 @@
       timelineInteractionVisible = false;
       timelineInteractionHideTimer = null;
     }, 900);
-  }
-
-  function timelineSectionAtSeconds(timeSeconds: number): UVSViewerTimelineSection | null {
-    const timeMs = Math.round(timeSeconds * 1000);
-    return timelineSections.find((section) =>
-      Number.isFinite(section.startTimeMs) &&
-      Number.isFinite(section.endTimeMs) &&
-      timeMs >= section.startTimeMs &&
-      timeMs <= section.endTimeMs) ?? null;
   }
 
   function timelineSectionGeometry(
@@ -2585,10 +2607,13 @@
         disabled={!videoUrl || duration <= 0}
         aria-label="Seek video"
         oninput={seek}
+        onpointerenter={previewTimelineAtPointer}
         onpointerdown={beginTimelineInteraction}
+        onpointermove={previewTimelineAtPointer}
         onpointerup={endTimelineInteraction}
-        onpointercancel={endTimelineInteraction}
-        onblur={endTimelineInteraction}
+        onpointercancel={cancelTimelineInteraction}
+        onpointerleave={leaveTimelinePreview}
+        onblur={cancelTimelineInteraction}
       />
       {#if timelineInteractionVisible}
         <output

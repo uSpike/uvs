@@ -135,6 +135,8 @@
     completed: boolean;
   }
 
+  const POINT_TIMELINE_LOOKAHEAD_FRACTION = 0.75;
+
   let snapshot = $state.raw<GameTrackingSnapshot>((() => initialSnapshot)());
   let activeTab = $state<PanelTab>(
     (() => paperOnlyMode || !initialSnapshot.data.game.hasVideo ? 'paper' : 'record')(),
@@ -205,6 +207,8 @@
   let observedOpenPointEndMs = $state(0);
   let autoSkipPointGaps = $state(true);
   let pointGapBufferSeconds = $state(5);
+  let pointTimelineList = $state<HTMLDivElement | null>(null);
+  let lastAutoScrolledTimelineKey: string | null = null;
 
   const currentPoint = $derived(
     snapshot.currentPointId === null
@@ -214,6 +218,19 @@
   const pointScrubber = $derived(pointScrubberAtTime(Math.round(playback.currentTime * 1000)));
   const recordPoint = $derived(pointScrubber?.point ?? null);
   const recordPointState = $derived(recordPoint ? calculatePointState(recordPoint) : null);
+  const chronologicalRecordPointTimelineItems = $derived(
+    recordPoint ? pointTimelineItems(recordPoint) : [],
+  );
+  const displayedRecordPointTimelineItems = $derived(
+    editing
+      ? [...chronologicalRecordPointTimelineItems].reverse()
+      : chronologicalRecordPointTimelineItems,
+  );
+  const upcomingRecordPointTimelineItem = $derived.by(() => {
+    if (editing) return null;
+    const playbackTimeMs = Math.round(playback.currentTime * 1000);
+    return chronologicalRecordPointTimelineItems.find((item) => item.timeMs >= playbackTimeMs) ?? null;
+  });
   const recordLine = $derived(
     recordPoint
       ? snapshot.data.lines.find((line) => line.id === recordPoint.lineId) ?? null
@@ -266,6 +283,39 @@
       Math.round(Math.max(0, pointGapBufferSeconds) * 1000),
     );
     if (targetTimeMs !== null) seekPlayback(targetTimeMs / 1000);
+  });
+
+  $effect(() => {
+    const timelineList = pointTimelineList;
+    const timelineItem = upcomingRecordPointTimelineItem;
+    if (editing || !pointScrubber?.completed || !recordPoint || !timelineList || !timelineItem) {
+      lastAutoScrolledTimelineKey = null;
+      return;
+    }
+    const itemKey = `${recordPoint.id}:${timelineItemKey(timelineItem)}`;
+    if (itemKey === lastAutoScrolledTimelineKey || timelineList.clientHeight === 0) return;
+    const row = timelineList.querySelector<HTMLElement>(
+      `[data-timeline-item="${timelineItemKey(timelineItem)}"]`,
+    );
+    if (!row) return;
+    const listTop = timelineList.getBoundingClientRect().top;
+    const rowTop = row.getBoundingClientRect().top - listTop + timelineList.scrollTop;
+    const maxScrollTop = Math.max(0, timelineList.scrollHeight - timelineList.clientHeight);
+    const targetScrollTop = Math.min(
+      maxScrollTop,
+      Math.max(
+        0,
+        rowTop - timelineList.clientHeight * (1 - POINT_TIMELINE_LOOKAHEAD_FRACTION),
+      ),
+    );
+    if (Math.abs(timelineList.scrollTop - targetScrollTop) > 1) {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      timelineList.scrollTo({
+        top: targetScrollTop,
+        behavior: playback.playing && !reduceMotion ? 'smooth' : 'auto',
+      });
+    }
+    lastAutoScrolledTimelineKey = itemKey;
   });
 
   onMount(() => {
@@ -1537,6 +1587,17 @@
       : item.point?.id === point.id);
   }
 
+  function timelineItemKey(item: ReturnType<typeof timelineItems>[number]): string {
+    return `${item.kind}:${item.id}`;
+  }
+
+  function sameTimelineItem(
+    left: ReturnType<typeof timelineItems>[number],
+    right: ReturnType<typeof timelineItems>[number] | null,
+  ): boolean {
+    return right !== null && left.kind === right.kind && left.id === right.id;
+  }
+
   function timelineItemIsLast(item: ReturnType<typeof timelineItems>[number]): boolean {
     const last = timelineItems().at(-1);
     return Boolean(last && last.kind === item.kind && last.id === item.id);
@@ -1728,7 +1789,15 @@
     <div class="mutation-error" role="alert"><AlertTriangle size={15} />{mutationError}</div>
   {/if}
 
-  <div class="panel-content">
+  <div
+    class="panel-content"
+    class:timeline-scroll-content={
+      activeTab === 'record' &&
+      draftMode === null &&
+      !editing &&
+      pointScrubber?.completed === true
+    }
+  >
     {#if draftMode === 'point'}
       <form class="entry-form" onsubmit={(event) => { event.preventDefault(); void savePoint(); }}>
         <header><h2>{editingPointId === null ? 'Choose the next lineup' : 'Edit point'}</h2><button type="button" onclick={() => closeDraft()}><X size={17} /></button></header>
@@ -1998,8 +2067,18 @@
                 </thead>
                 <tbody>
                   {#each pointResults as result}
+                    {@const point = snapshot.data.points.find((candidate) => candidate.id === result.pointId)}
                     <tr class:active={recordPoint?.id === result.pointId}>
-                      <th><button type="button" onclick={() => { const point = snapshot.data.points.find((candidate) => candidate.id === result.pointId); if (point) seekToPoint(point); }}>Point {result.sequenceNumber}</button></th>
+                      <th>
+                        <button type="button" onclick={() => { if (point) seekToPoint(point); }}>
+                          <strong>Point {result.sequenceNumber}</strong>
+                          <small>
+                            {point
+                              ? `${snapshot.data.lines.find((line) => line.id === point.lineId)?.name ?? 'Unknown line'} · ${point.startingPossession === 'offense' ? 'O' : 'D'}`
+                              : 'Unknown line · —'}
+                          </small>
+                        </button>
+                      </th>
                       <td class:scored={result.result === 'won'}>{result.ourScore}</td>
                       <td class:scored={result.result === 'lost'} class:break-score={result.breakAgainst}>{result.opponentScore}</td>
                     </tr>
@@ -2124,35 +2203,52 @@
                 {/if}
               </div>
             </header>
-            {#each pointTimelineItems(recordPoint).reverse() as item, index}
-              <div class="recent-row" class:latest={index === 0}>
-                <button class="recent-row-main" type="button" onclick={() => seekPlayback(item.timeMs / 1000)}>
-                  <time>{formatTime(item.timeMs - recordPoint.startTimeMs)}</time>
-                  <span>{item.kind === 'point' ? 'Pull' : gameEventLabel(item.event.type)}</span>
-                  <small>{item.kind === 'point' ? `${recordLine?.name ?? 'Unknown line'} · ${persistedPointMatchup(item.point)?.toUpperCase() ?? 'unclassified'}` : eventDescription(item.event)}</small>
-                </button>
-                {#if editing}
-                  <div class="recent-row-actions">
-                    <button
-                      class="recent-edit"
-                      type="button"
-                      onclick={() => openTimelineItemEditor(item)}
-                      disabled={saving}
-                      title={item.kind === 'point' ? 'Edit pull time and starting players' : 'Edit action time and players'}
-                    ><Edit3 size={13} />Edit</button>
-                    {#if timelineItemIsLast(item)}
+            <div
+              class="point-event-list"
+              role="region"
+              aria-label={`Point ${recordPoint.sequenceNumber} actions`}
+              bind:this={pointTimelineList}
+            >
+              {#each displayedRecordPointTimelineItems as item, index}
+                <div
+                  class="recent-row"
+                  class:latest={editing && index === 0}
+                  class:upcoming={sameTimelineItem(item, upcomingRecordPointTimelineItem)}
+                  data-timeline-item={timelineItemKey(item)}
+                >
+                  <button
+                    class="recent-row-main"
+                    type="button"
+                    aria-current={sameTimelineItem(item, upcomingRecordPointTimelineItem) ? 'time' : undefined}
+                    onclick={() => seekPlayback(item.timeMs / 1000)}
+                  >
+                    <time>{formatTime(item.timeMs - recordPoint.startTimeMs)}</time>
+                    <span>{item.kind === 'point' ? 'Pull' : gameEventLabel(item.event.type)}</span>
+                    <small>{item.kind === 'point' ? `${recordLine?.name ?? 'Unknown line'} · ${persistedPointMatchup(item.point)?.toUpperCase() ?? 'unclassified'}` : eventDescription(item.event)}</small>
+                  </button>
+                  {#if editing}
+                    <div class="recent-row-actions">
                       <button
-                        class="recent-undo"
+                        class="recent-edit"
                         type="button"
-                        onclick={() => void undoLastTimelineEntry()}
+                        onclick={() => openTimelineItemEditor(item)}
                         disabled={saving}
-                        title={undoTimelineEntryLabel()}
-                      ><RotateCcw size={13} />Undo</button>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/each}
+                        title={item.kind === 'point' ? 'Edit pull time and starting players' : 'Edit action time and players'}
+                      ><Edit3 size={13} />Edit</button>
+                      {#if timelineItemIsLast(item)}
+                        <button
+                          class="recent-undo"
+                          type="button"
+                          onclick={() => void undoLastTimelineEntry()}
+                          disabled={saving}
+                          title={undoTimelineEntryLabel()}
+                        ><RotateCcw size={13} />Undo</button>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
           </div>
         {/if}
         {#if snapshot.statistics.warnings.length > 0}
@@ -2464,6 +2560,8 @@
   .panel-tabs button.active { border-bottom-color:#e3ae27; color:#fff; }
   .panel-tabs button:disabled { cursor:not-allowed; opacity:.35; }
   .panel-content { flex:1 1 auto; min-height:0; overflow:auto; }
+  .panel-content.timeline-scroll-content { display:flex; flex-direction:column; overflow:hidden; }
+  .panel-content.timeline-scroll-content .record-view { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
   .point-playback-controls { flex:0 0 auto; border-top:1px solid #465047; background:#1b201c; box-shadow:0 -5px 16px rgba(0,0,0,.22); }
   .auto-skip-settings { display:flex; align-items:center; justify-content:space-between; gap:9px; padding:7px 11px; border-bottom:1px solid #343a34; color:#aeb7ac; background:#1d201c; font-size:9px; }
   .auto-skip-toggle,.auto-skip-buffer { display:flex; align-items:center; gap:5px; min-width:0; }
@@ -2494,7 +2592,9 @@
   .point-results-table th,.point-results-table td { height:29px; padding:4px 7px; border-bottom:1px solid #2d322d; text-align:center; }
   .point-results-table thead th { position:sticky; top:0; z-index:1; max-width:90px; overflow:hidden; color:#858e84; background:#20241f; font-size:8px; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
   .point-results-table tbody th { padding:0; text-align:left; }
-  .point-results-table tbody th button { width:100%; height:29px; padding:0 9px; border:0; color:#c5ccc2; background:transparent; font-size:9px; font-weight:750; text-align:left; }
+  .point-results-table tbody th button { display:flex; align-items:center; gap:5px; width:100%; height:29px; min-width:0; padding:0 9px; border:0; color:#c5ccc2; background:transparent; font-size:9px; text-align:left; }
+  .point-results-table tbody th button strong { flex:0 0 auto; font-size:9px; font-weight:750; }
+  .point-results-table tbody th button small { min-width:0; overflow:hidden; color:#858d83; font-size:8px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
   .point-results-table tbody tr:hover { background:#222722; }
   .point-results-table tbody tr.active { background:#332e1e; box-shadow:inset 3px 0 #d0a637; }
   .point-results-table td.scored { color:#f4dc8d; background:#34301e; box-shadow:inset 0 0 0 1px #635628; font-weight:850; }
@@ -2556,21 +2656,23 @@
   kbd { padding:1px 3px; border:1px solid #50564d; border-radius:2px; color:#838a80; font:8px inherit; }
   .recent-events { border-top:1px solid #353934; }
   .point-events { margin-top:2px; }
+  .timeline-scroll-content .point-events { display:flex; flex:1 1 0; flex-direction:column; min-height:0; overflow:hidden; }
+  .timeline-scroll-content .point-event-list { flex:1 1 auto; min-height:0; overflow-x:hidden; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
   .recent-header-actions > span { color:#7f877d; font-size:9px; }
   .recent-events header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; }
   .recent-events h3 { margin:0; color:#dfe4dc; font-size:11px; }
   .recent-header-actions { display:flex; align-items:center; gap:8px; }
   .recent-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:stretch; width:100%; min-height:35px; border-top:1px solid #2c302b; background:transparent; }
   .recent-row:hover,.recent-row:focus-within { background:#222520; }
-  .recent-row.latest { border-top-color:#776324; border-left:3px solid #d0a637; background:#2b281d; }
-  .recent-row.latest:hover,.recent-row.latest:focus-within { background:#332e1e; }
+  .recent-row.latest,.recent-row.upcoming { border-top-color:#776324; border-left:3px solid #d0a637; background:#2b281d; }
+  .recent-row.latest:hover,.recent-row.latest:focus-within,.recent-row.upcoming:hover,.recent-row.upcoming:focus-within { background:#332e1e; }
   .recent-row-main { display:grid; grid-template-columns:42px 90px minmax(0,1fr); align-items:center; min-width:0; padding:4px 10px; border:0; color:#c3c9c0; background:transparent; text-align:left; }
   .recent-row-main time { color:#899087; font:9px ui-monospace,monospace; }
   .recent-row-main span { font-size:10px; }
   .recent-row-main small { overflow:hidden; color:#777f75; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
-  .recent-row.latest .recent-row-main { color:#fff4ce; }
-  .recent-row.latest .recent-row-main time { color:#d8b74e; }
-  .recent-row.latest .recent-row-main small { color:#b8ae8a; }
+  .recent-row.latest .recent-row-main,.recent-row.upcoming .recent-row-main { color:#fff4ce; }
+  .recent-row.latest .recent-row-main time,.recent-row.upcoming .recent-row-main time { color:#d8b74e; }
+  .recent-row.latest .recent-row-main small,.recent-row.upcoming .recent-row-main small { color:#b8ae8a; }
   .recent-row-actions { display:flex; align-items:center; gap:4px; margin:4px 7px 4px 0; }
   .recent-edit,.recent-undo { display:flex; align-items:center; gap:4px; min-height:26px; padding:0 7px; border-radius:3px; font-size:9px; font-weight:700; }
   .recent-edit { border:1px solid #496b72; color:#a9dce5; background:#203439; }
