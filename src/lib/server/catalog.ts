@@ -6,7 +6,7 @@ import {
   parseGameViewerSettingsJson,
   type GameViewerSettings,
 } from '$lib/game-settings';
-import type { MetadataTimeline } from '$lib/metadata';
+import { parseMetadataJsonl, type MetadataTimeline } from '$lib/metadata';
 import { getDatabase } from './database';
 import { hashTeamPassword } from './auth';
 
@@ -46,8 +46,7 @@ export interface TeamWithGames {
 
 export interface GameRecord extends GameSummary {
   videoSource: string | null;
-  metadataJsonl: string | null;
-  metadataJson: string | null;
+  metadataSource: string | null;
   settings: GameViewerSettings;
 }
 
@@ -55,8 +54,11 @@ export interface GameViewRecord extends GameSummary {
   settings: GameViewerSettings;
 }
 
-export interface GameMetadataSummary {
-  originalBytes: number;
+export type GameMetadataSummary = ExternalGameMetadataSummary | LegacyGameMetadataSummary;
+
+export interface ExternalGameMetadataSummary {
+  storage: 'external';
+  originalBytes: null;
   schemaVersion: number;
   sourcePath: string;
   videoWidth: number;
@@ -66,15 +68,22 @@ export interface GameMetadataSummary {
   detectionInterval: number;
   trackingMode: string;
   roiPointCount: number;
-  detectionSampleCount: number;
-  trackSampleCount: number;
-  lastFrameIndex: number;
+}
+
+export interface LegacyGameMetadataSummary {
+  storage: 'database';
+  originalBytes: number;
 }
 
 export interface GameAdminRecord extends GameViewRecord {
   videoSource: string | null;
+  metadataSource: string | null;
   metadata: GameMetadataSummary | null;
 }
+
+export type GameMetadataLocation =
+  | { kind: 'external'; source: string }
+  | { kind: 'legacy'; jsonl: string };
 
 export interface CreateGameInput {
   tournamentId: number;
@@ -85,7 +94,7 @@ export interface CreateGameInput {
   initialOurScore: number;
   initialOpponentScore: number;
   videoSource: string | null;
-  metadataJsonl: string | null;
+  metadataSource: string | null;
   metadata: MetadataTimeline | null;
 }
 
@@ -99,7 +108,7 @@ export interface UpdateGameInput {
   initialOpponentScore: number;
   videoSource: string | null;
   settings: GameViewerSettings;
-  metadataJsonl?: string;
+  metadataSource?: string;
   metadata?: MetadataTimeline;
 }
 
@@ -131,6 +140,8 @@ interface GameRow {
   video_source?: string;
   metadata_jsonl?: string;
   metadata_json?: string;
+  metadata_source?: string;
+  metadata_manifest_json?: string;
   settings_json?: string;
   metadata_bytes?: number;
 }
@@ -194,19 +205,23 @@ export class CatalogRepository {
     return row?.password_plaintext ?? null;
   }
 
-  /** Create a game with optional video and metadata. */
+  /** Create a game with optional video and URL-backed metadata. */
   createGame(input: CreateGameInput): GameRecord {
     const title = normalizeRequiredText(input.title, 160, 'Game title');
     const opponentName = normalizeRequiredText(input.opponentName, 160, 'Opponent name');
-    const hasVideo = input.videoSource !== null || input.metadataJsonl !== null || input.metadata !== null;
+    const hasVideo =
+      input.videoSource !== null || input.metadataSource !== null || input.metadata !== null;
     if (
       hasVideo &&
-      (input.videoSource === null || input.metadataJsonl === null || input.metadata === null)
+      (input.videoSource === null || input.metadataSource === null || input.metadata === null)
     ) {
-      throw new Error('Video games require a video URL and metadata file.');
+      throw new Error('Video games require both a video URL and metadata URL.');
     }
     const videoSource = hasVideo
       ? normalizeRequiredText(input.videoSource!, 2048, 'Video URL')
+      : '';
+    const metadataSource = hasVideo
+      ? normalizeRequiredText(input.metadataSource!, 4096, 'Metadata URL')
       : '';
     const tournament = this.database
       .prepare(
@@ -234,8 +249,9 @@ export class CatalogRepository {
         `INSERT INTO games (
            team_id, tournament_id, token, title, opponent_name, played_at,
            player_count, initial_our_score, initial_opponent_score,
-           video_source, metadata_jsonl, metadata_json, settings_json, has_video
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           video_source, metadata_source, metadata_manifest_json,
+           metadata_jsonl, metadata_json, settings_json, has_video
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         tournament.team_id,
@@ -248,8 +264,10 @@ export class CatalogRepository {
         initialOurScore,
         initialOpponentScore,
         videoSource,
-        input.metadataJsonl ?? '',
-        JSON.stringify(input.metadata ?? {}),
+        metadataSource,
+        JSON.stringify(input.metadata?.manifest ?? {}),
+        '',
+        '{}',
         JSON.stringify(settings),
         hasVideo ? 1 : 0,
       );
@@ -297,7 +315,7 @@ export class CatalogRepository {
     return row ? mapGameRecord(row) : null;
   }
 
-  /** Return game page data without loading either metadata blob. */
+  /** Return game page data without loading metadata content. */
   getGameViewByToken(token: string): GameViewRecord | null {
     const row = this.database
       .prepare(gameSummaryQuery('WHERE games.token = ?'))
@@ -322,7 +340,8 @@ export class CatalogRepository {
     if (
       !row ||
       row.video_source === undefined ||
-      row.metadata_json === undefined ||
+      row.metadata_source === undefined ||
+      row.metadata_manifest_json === undefined ||
       row.settings_json === undefined ||
       row.metadata_bytes === undefined
     ) {
@@ -330,29 +349,33 @@ export class CatalogRepository {
     }
 
     const hasVideo = row.has_video === 1;
-    const metadata = hasVideo ? JSON.parse(row.metadata_json) as MetadataTimeline : null;
+    const usesExternalMetadata = hasVideo && row.metadata_source.length > 0;
     return {
       ...mapGameSummary(row),
       videoSource: hasVideo ? row.video_source : null,
+      metadataSource: usesExternalMetadata ? row.metadata_source : null,
       settings: parseGameViewerSettingsJson(row.settings_json),
-      metadata: metadata ? summarizeMetadata(metadata, row.metadata_bytes) : null,
+      metadata: !hasVideo
+        ? null
+        : usesExternalMetadata
+          ? summarizeMetadata(metadataFromStoredManifest(row.metadata_manifest_json))
+          : { storage: 'database', originalBytes: row.metadata_bytes },
     };
   }
 
-  /** Return serialized parsed metadata without reparsing the original JSONL. */
-  getMetadataJsonByToken(token: string): string | null {
+  /** Return the external source, or a legacy inline fallback pending migration. */
+  getMetadataLocationByToken(token: string): GameMetadataLocation | null {
     const row = this.database
-      .prepare('SELECT metadata_json FROM games WHERE token = ? AND has_video = 1')
-      .get(token) as { metadata_json: string } | undefined;
-    return row?.metadata_json ?? null;
-  }
-
-  /** Return the original metadata JSONL for an administrative download. */
-  getMetadataJsonlByToken(token: string): string | null {
-    const row = this.database
-      .prepare('SELECT metadata_jsonl FROM games WHERE token = ? AND has_video = 1')
-      .get(token) as { metadata_jsonl: string } | undefined;
-    return row?.metadata_jsonl ?? null;
+      .prepare(
+        `SELECT metadata_source, metadata_jsonl
+           FROM games
+          WHERE token = ? AND has_video = 1`,
+      )
+      .get(token) as { metadata_source: string; metadata_jsonl: string } | undefined;
+    if (!row) return null;
+    if (row.metadata_source) return { kind: 'external', source: row.metadata_source };
+    if (row.metadata_jsonl) return { kind: 'legacy', jsonl: row.metadata_jsonl };
+    return null;
   }
 
   /** Return the private source URL used by the streaming endpoint. */
@@ -394,13 +417,20 @@ export class CatalogRepository {
       .get(input.tournamentId) as { id: number; team_id: number } | undefined;
     if (!tournament) throw new Error('Selected event does not exist.');
     const existing = this.database
-      .prepare('SELECT id, tournament_id, has_video, metadata_jsonl, metadata_json FROM games WHERE token = ?')
+      .prepare(
+        `SELECT id, tournament_id, has_video, metadata_source, metadata_manifest_json,
+                length(CAST(metadata_jsonl AS BLOB)) +
+                  length(CAST(metadata_json AS BLOB)) AS legacy_metadata_bytes
+           FROM games
+          WHERE token = ?`,
+      )
       .get(token) as {
         id: number;
         tournament_id: number;
         has_video: number;
-        metadata_jsonl: string;
-        metadata_json: string;
+        metadata_source: string;
+        metadata_manifest_json: string;
+        legacy_metadata_bytes: number;
       } | undefined;
     if (!existing) return false;
     if (
@@ -426,25 +456,29 @@ export class CatalogRepository {
       'Initial opponent score',
     );
 
-    const replacesMetadata = input.metadataJsonl !== undefined || input.metadata !== undefined;
-    if (replacesMetadata && (input.metadataJsonl === undefined || input.metadata === undefined)) {
-      throw new Error('Original and parsed metadata must be replaced together.');
+    const replacesMetadata = input.metadataSource !== undefined || input.metadata !== undefined;
+    if (replacesMetadata && (input.metadataSource === undefined || input.metadata === undefined)) {
+      throw new Error('Metadata URL and validated manifest must be replaced together.');
     }
 
     let hasVideo = existing.has_video === 1;
-    let metadataJsonl = existing.metadata_jsonl;
-    let metadataJson = existing.metadata_json;
+    let metadataSource = existing.metadata_source;
+    let metadataManifestJson = existing.metadata_manifest_json;
+    let clearsLegacyMetadata = false;
     if (videoSource === null) {
-      if (replacesMetadata) throw new Error('A metadata file requires a video URL.');
+      if (replacesMetadata) throw new Error('A metadata URL requires a video URL.');
       hasVideo = false;
-      metadataJsonl = '';
-      metadataJson = '{}';
+      metadataSource = '';
+      metadataManifestJson = '{}';
+      clearsLegacyMetadata = true;
     } else if (replacesMetadata) {
       hasVideo = true;
-      metadataJsonl = input.metadataJsonl!;
-      metadataJson = JSON.stringify(input.metadata!);
+      metadataSource = normalizeRequiredText(input.metadataSource!, 4096, 'Metadata URL');
+      metadataManifestJson = JSON.stringify(input.metadata!.manifest);
+      // Replacing a legacy record releases both large database copies.
+      clearsLegacyMetadata = true;
     } else if (!hasVideo) {
-      throw new Error('Select metadata when adding video to a paper-only game.');
+      throw new Error('Enter a metadata URL when adding video to a paper-only game.');
     }
 
     const result = this.database
@@ -452,8 +486,10 @@ export class CatalogRepository {
         `UPDATE games
             SET team_id = ?, tournament_id = ?, title = ?, opponent_name = ?, played_at = ?,
                 player_count = ?, initial_our_score = ?, initial_opponent_score = ?,
-                video_source = ?, metadata_jsonl = ?, metadata_json = ?, settings_json = ?,
-                has_video = ?,
+                video_source = ?, metadata_source = ?, metadata_manifest_json = ?,
+                metadata_jsonl = CASE WHEN ? = 1 THEN '' ELSE metadata_jsonl END,
+                metadata_json = CASE WHEN ? = 1 THEN '{}' ELSE metadata_json END,
+                settings_json = ?, has_video = ?,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           WHERE token = ?`,
       )
@@ -467,12 +503,23 @@ export class CatalogRepository {
         initialOurScore,
         initialOpponentScore,
         videoSource ?? '',
-        metadataJsonl,
-        metadataJson,
+        metadataSource,
+        metadataManifestJson,
+        clearsLegacyMetadata ? 1 : 0,
+        clearsLegacyMetadata ? 1 : 0,
         JSON.stringify(settings),
         hasVideo ? 1 : 0,
         token,
       );
+    if (
+      result.changes === 1 &&
+      clearsLegacyMetadata &&
+      existing.legacy_metadata_bytes > 2 &&
+      !this.database.inTransaction
+    ) {
+      // Clearing the values frees pages; VACUUM returns those pages to the filesystem.
+      this.database.exec('VACUUM');
+    }
     return result.changes === 1;
   }
 
@@ -485,12 +532,25 @@ export class CatalogRepository {
   /** Restore viewer settings from metadata calibration and application defaults. */
   resetGameSettings(token: string): GameViewerSettings | null {
     const row = this.database
-      .prepare('SELECT metadata_json, has_video FROM games WHERE token = ?')
-      .get(token) as { metadata_json: string; has_video: number } | undefined;
+      .prepare(
+        `SELECT metadata_source, metadata_manifest_json, metadata_json, has_video
+           FROM games
+          WHERE token = ?`,
+      )
+      .get(token) as {
+        metadata_source: string;
+        metadata_manifest_json: string;
+        metadata_json: string;
+        has_video: number;
+      } | undefined;
     if (!row) {
       return null;
     }
-    const metadata = row.has_video === 1 ? JSON.parse(row.metadata_json) as MetadataTimeline : null;
+    const metadata = row.has_video !== 1
+      ? null
+      : row.metadata_source
+        ? metadataFromStoredManifest(row.metadata_manifest_json)
+        : JSON.parse(row.metadata_json) as MetadataTimeline;
     const settings = defaultGameViewerSettings(metadata);
     this.updateGameSettings(token, settings);
     return settings;
@@ -542,7 +602,7 @@ function fullGameQuery(suffix: string): string {
                  games.opponent_name, games.played_at, games.player_count,
                  games.initial_our_score, games.initial_opponent_score,
                  games.created_at, games.updated_at, games.video_source,
-                 games.metadata_jsonl, games.metadata_json, games.settings_json,
+                 games.metadata_source, games.settings_json,
                  games.has_video
             FROM games
             JOIN teams ON teams.id = games.team_id
@@ -557,7 +617,8 @@ function adminGameQuery(suffix: string): string {
                  games.opponent_name, games.played_at, games.player_count,
                  games.initial_our_score, games.initial_opponent_score,
                  games.created_at, games.updated_at, games.video_source,
-                 games.metadata_json, games.settings_json,
+                 games.metadata_source, games.metadata_manifest_json,
+                 games.settings_json,
                  length(CAST(games.metadata_jsonl AS BLOB)) AS metadata_bytes,
                  games.has_video
             FROM games
@@ -600,8 +661,7 @@ function mapGameSummary(row: GameRow): GameSummary {
 function mapGameRecord(row: GameRow): GameRecord {
   if (
     row.video_source === undefined ||
-    row.metadata_jsonl === undefined ||
-    row.metadata_json === undefined ||
+    row.metadata_source === undefined ||
     row.settings_json === undefined
   ) {
     throw new Error('Game record is missing required fields.');
@@ -609,19 +669,20 @@ function mapGameRecord(row: GameRow): GameRecord {
   return {
     ...mapGameSummary(row),
     videoSource: row.has_video === 1 ? row.video_source : null,
-    metadataJsonl: row.has_video === 1 ? row.metadata_jsonl : null,
-    metadataJson: row.has_video === 1 ? row.metadata_json : null,
+    metadataSource: row.has_video === 1 && row.metadata_source
+      ? row.metadata_source
+      : null,
     settings: parseGameViewerSettingsJson(row.settings_json),
   };
 }
 
 function summarizeMetadata(
   metadata: MetadataTimeline,
-  originalBytes: number,
-): GameMetadataSummary {
+): ExternalGameMetadataSummary {
   const manifest = metadata.manifest;
   return {
-    originalBytes,
+    storage: 'external',
+    originalBytes: null,
     schemaVersion: manifest.schema_version,
     sourcePath: manifest.video.path,
     videoWidth: manifest.video.width,
@@ -631,10 +692,23 @@ function summarizeMetadata(
     detectionInterval: manifest.detection_interval,
     trackingMode: manifest.tracking_mode,
     roiPointCount: manifest.roi.points.length,
-    detectionSampleCount: metadata.detectionSamples.length,
-    trackSampleCount: metadata.trackSamples.length,
-    lastFrameIndex: metadata.lastFrameIndex,
   };
+}
+
+function metadataFromStoredManifest(value: string): MetadataTimeline {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(value);
+  } catch {
+    throw new Error('Stored metadata manifest is invalid.');
+  }
+  return parseStoredMetadataManifest(manifest);
+}
+
+function parseStoredMetadataManifest(manifest: unknown): MetadataTimeline {
+  // Reuse the metadata boundary validator instead of trusting database JSON.
+  const line = JSON.stringify({ kind: 'manifest', manifest });
+  return parseMetadataJsonl(line);
 }
 
 function normalizeRequiredText(value: string, maximumLength: number, name: string): string {

@@ -63,7 +63,7 @@ function configuredGame() {
     initialOurScore: 0,
     initialOpponentScore: 0,
     videoSource: 'file:///srv/game.mp4',
-    metadataJsonl,
+    metadataSource: 'https://metadata.example.test/game.metadata.jsonl',
     metadata,
   });
   return {
@@ -91,7 +91,7 @@ describe('GameTrackingRepository', () => {
       initialOurScore: 0,
       initialOpponentScore: 0,
       videoSource: 'file:///srv/later-game.mp4',
-      metadataJsonl,
+      metadataSource: 'https://metadata.example.test/game.metadata.jsonl',
       metadata,
     });
 

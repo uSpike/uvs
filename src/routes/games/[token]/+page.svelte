@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { ArrowLeft, BarChart3, Copy, Edit3, ExternalLink, Link2, PanelRightClose, PanelRightOpen, Plus, Trash2, Unlock } from '@lucide/svelte';
-  import type { MetadataTimeline } from '$lib/metadata';
+  import { parseMetadataJsonl, type MetadataTimeline } from '$lib/metadata';
   import {
     UVSVideoViewer,
     type GameViewerSettings,
@@ -94,7 +94,7 @@
         if (!response.ok) {
           throw new Error(`Metadata request failed with status ${response.status}.`);
         }
-        return response.json() as Promise<MetadataTimeline>;
+        return response.text().then(parseMetadataJsonl);
       })
       .then((metadata) => {
         source = {

@@ -1,17 +1,21 @@
 import { error } from '@sveltejs/kit';
 import { CatalogRepository } from '$lib/server/catalog';
 import { requireGameAccess } from '$lib/server/access';
+import { metadataSourceResponse } from '$lib/server/metadata-source';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = ({ params, locals }) => {
+export const GET: RequestHandler = async ({ params, locals, request }) => {
   requireGameAccess(locals, params.token);
-  const metadataJson = new CatalogRepository().getMetadataJsonByToken(params.token);
-  if (!metadataJson) {
+  const metadata = new CatalogRepository().getMetadataLocationByToken(params.token);
+  if (!metadata) {
     error(404, 'Game not found.');
   }
-  return new Response(metadataJson, {
+  if (metadata.kind === 'external') {
+    return metadataSourceResponse(metadata.source, request);
+  }
+  return new Response(metadata.jsonl, {
     headers: {
-      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
       'Cache-Control': 'private, max-age=300',
     },
   });

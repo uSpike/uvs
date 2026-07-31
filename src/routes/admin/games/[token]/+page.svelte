@@ -79,7 +79,6 @@
     id="game-editor"
     class="editor-form"
     method="POST"
-    enctype="multipart/form-data"
     action="?/saveGame"
   >
     <section class="editor-section" aria-labelledby="game-details-heading">
@@ -189,7 +188,7 @@
         <FileJson size={19} aria-hidden="true" />
         <div>
           <h2 id="metadata-heading">Metadata</h2>
-          <p>{data.game.metadata ? `${formatBytes(data.game.metadata.originalBytes)} stored JSONL` : 'No video metadata'}</p>
+          <p>{data.game.metadata?.storage === 'external' ? 'External JSONL source' : data.game.metadata?.originalBytes !== null && data.game.metadata?.originalBytes !== undefined ? `${formatBytes(data.game.metadata.originalBytes)} legacy database JSONL` : 'No video metadata'}</p>
         </div>
         {#if data.game.metadata}
         <div class="section-actions">
@@ -198,8 +197,8 @@
             href={resolve(`/api/games/${data.game.token}/metadata`)}
             target="_blank"
             rel="noreferrer"
-            aria-label="View parsed metadata"
-            title="View parsed metadata"
+            aria-label="View metadata JSONL"
+            title="View metadata JSONL"
           >
             <Eye size={16} aria-hidden="true" />
           </a>
@@ -215,7 +214,7 @@
         {/if}
       </div>
 
-      {#if data.game.metadata}
+      {#if data.game.metadata?.storage === 'external'}
       <dl class="metadata-facts">
         <div>
           <dt>Export</dt>
@@ -230,18 +229,6 @@
           <dd>{data.game.metadata.videoCodec} · {data.game.metadata.videoQuality}</dd>
         </div>
         <div>
-          <dt>Detection samples</dt>
-          <dd>{data.game.metadata.detectionSampleCount.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Track samples</dt>
-          <dd>{data.game.metadata.trackSampleCount.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Last frame</dt>
-          <dd>{data.game.metadata.lastFrameIndex.toLocaleString()}</dd>
-        </div>
-        <div>
           <dt>Detection interval</dt>
           <dd>{data.game.metadata.detectionInterval} frames</dd>
         </div>
@@ -254,18 +241,26 @@
           <dd title={data.game.metadata.sourcePath}>{data.game.metadata.sourcePath}</dd>
         </div>
       </dl>
+      {:else if data.game.metadata}
+        <p class="metadata-empty">This legacy game still loads metadata from SQLite. Enter the external JSONL URL below to migrate it and compact the database.</p>
       {:else}
-        <p class="metadata-empty">This game currently uses paper statistics only. Add a video URL and metadata file together to enable video playback.</p>
+        <p class="metadata-empty">This game currently uses paper statistics only. Add a video URL and metadata URL together to enable video playback.</p>
       {/if}
 
-      <label class="metadata-upload" for="replacement-metadata">
-        <span class="field-label">Replacement JSONL (optional)</span>
+      <label class="metadata-upload" for="metadata-source">
+        <span class="field-label">Metadata URL</span>
         <input
-          id="replacement-metadata"
-          name="metadata"
-          type="file"
-          accept=".metadata.jsonl,.jsonl,.ndjson,application/x-ndjson"
+          id="metadata-source"
+          name="metadataSource"
+          type="text"
+          inputmode="url"
+          maxlength="4096"
+          placeholder="https://media.example/game.metadata.jsonl"
+          value={submittedValues?.metadataSource ?? data.game.metadataSource ?? ''}
         />
+        {#if data.game.metadata?.storage === 'database'}
+          <small>Legacy metadata is still stored in SQLite. Enter its external URL to release both database copies.</small>
+        {/if}
       </label>
     </section>
 

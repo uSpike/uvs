@@ -54,7 +54,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     expect(
       database.prepare(
         `SELECT season_rosters.name AS roster, tournaments.name AS tournament,
@@ -78,6 +78,9 @@ describe('database migrations', () => {
     expect(
       (database.pragma('table_info(players)') as Array<{ name: string }>).map((column) => column.name),
     ).toContain('matchup_role');
+    expect(
+      (database.pragma('table_info(games)') as Array<{ name: string }>).map((column) => column.name),
+    ).toEqual(expect.arrayContaining(['metadata_source', 'metadata_manifest_json']));
     expect(
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_point_player_matchup_overrides'").get(),
     ).toEqual({ name: 'game_point_player_matchup_overrides' });
@@ -119,7 +122,7 @@ describe('database migrations', () => {
 
     expect(database.prepare('SELECT COUNT(*) AS count FROM season_rosters').get()).toEqual({ count: 0 });
     expect(database.prepare('SELECT COUNT(*) AS count FROM tournaments').get()).toEqual({ count: 0 });
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     database.close();
   });
 
@@ -141,7 +144,7 @@ describe('database migrations', () => {
     expect(
       database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'game_players'").get(),
     ).toBeUndefined();
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     database.close();
   });
 
@@ -169,7 +172,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     expect(
       (database.pragma('table_info(manual_game_points)') as Array<{ name: string }>)
         .map((column) => column.name),
@@ -218,7 +221,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     expect(
       (database.pragma('table_info(manual_game_points)') as Array<{ name: string }>)
         .map((column) => column.name),
@@ -272,7 +275,7 @@ describe('database migrations', () => {
 
     migrateDatabase(database);
 
-    expect(database.pragma('user_version', { simple: true })).toBe(21);
+    expect(database.pragma('user_version', { simple: true })).toBe(22);
     expect(
       database
         .prepare(

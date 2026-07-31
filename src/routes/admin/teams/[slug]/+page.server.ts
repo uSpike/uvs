@@ -1,13 +1,11 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import { parseMetadataJsonl } from '$lib/metadata';
 import { parseMatchupRole } from '$lib/matchup';
 import { CatalogRepository } from '$lib/server/catalog';
+import { validateMetadataSource } from '$lib/server/metadata-source';
 import { TournamentRepository } from '$lib/server/tournaments';
 import { validateVideoSource } from '$lib/server/video-source';
 import type { Actions, PageServerLoad } from './$types';
-
-const MAX_METADATA_BYTES = 128 * 1024 * 1024;
 
 export const load: PageServerLoad = ({ params, locals, url }) => {
   requireAdmin(locals.role, url.pathname);
@@ -85,22 +83,8 @@ export const actions: Actions = {
       initialOpponentScore: Number(form.get('initialOpponentScore')),
       hasVideo: form.has('hasVideo'),
       videoSource: String(form.get('videoSource') ?? ''),
+      metadataSource: String(form.get('metadataSource') ?? ''),
     };
-    const metadataFile = form.get('metadata');
-    if (values.hasVideo && (!(metadataFile instanceof File) || metadataFile.size === 0)) {
-      return fail(400, {
-        action: 'createGame',
-        error: 'Select a panorama metadata JSONL file.',
-        values,
-      });
-    }
-    if (values.hasVideo && metadataFile instanceof File && metadataFile.size > MAX_METADATA_BYTES) {
-      return fail(413, {
-        action: 'createGame',
-        error: 'Metadata files must be 128 MiB or smaller.',
-        values,
-      });
-    }
 
     let gameToken: string;
     try {
@@ -108,8 +92,9 @@ export const actions: Actions = {
       if (!new TournamentRepository().getTournament(params.slug, tournamentId)) {
         throw new Error('Select an event from this team.');
       }
-      const metadataJsonl = values.hasVideo ? await (metadataFile as File).text() : null;
-      const metadata = metadataJsonl ? parseMetadataJsonl(metadataJsonl) : null;
+      const validatedMetadata = values.hasVideo
+        ? await validateMetadataSource(values.metadataSource)
+        : null;
       const videoSource = values.hasVideo ? await validateVideoSource(values.videoSource) : null;
       const game = new CatalogRepository().createGame({
         tournamentId,
@@ -120,8 +105,8 @@ export const actions: Actions = {
         initialOurScore: values.initialOurScore,
         initialOpponentScore: values.initialOpponentScore,
         videoSource,
-        metadataJsonl,
-        metadata,
+        metadataSource: validatedMetadata?.source ?? null,
+        metadata: validatedMetadata?.metadata ?? null,
       });
       gameToken = game.token;
     } catch (caught) {

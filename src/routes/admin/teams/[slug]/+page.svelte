@@ -708,12 +708,13 @@
                     required
                   />
                 </label>
-                <label class="game-create-wide game-metadata-file">
-                  <span class="field-label">Metadata JSONL</span>
+                <label class="game-create-wide">
+                  <span class="field-label">Metadata URL</span>
                   <input
-                    name="metadata"
-                    type="file"
-                    accept=".metadata.jsonl,.jsonl,.ndjson,application/x-ndjson"
+                    name="metadataSource"
+                    inputmode="url"
+                    placeholder="https://media.example/game.metadata.jsonl"
+                    value={gameFormValues?.metadataSource ?? ''}
                     required
                   />
                 </label>
@@ -1659,12 +1660,6 @@
   .game-video-toggle span { display: grid; gap: 2px; }
   .game-video-toggle strong { color: #343b33; font-size: 11px; }
   .game-video-toggle small { color: #687066; font-size: 9px; }
-
-  .game-metadata-file {
-    padding: 9px;
-    border: 1px dashed #c5ccc2;
-    background: #fff;
-  }
 
   .line-form {
     display: grid;

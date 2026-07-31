@@ -1,13 +1,12 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
 import { parseGameViewerSettings } from '$lib/game-settings';
-import { parseMetadataJsonl, type MetadataTimeline } from '$lib/metadata';
 import { CatalogRepository } from '$lib/server/catalog';
+import { validateMetadataSource } from '$lib/server/metadata-source';
 import { TournamentRepository } from '$lib/server/tournaments';
 import { validateVideoSource } from '$lib/server/video-source';
 import type { Actions, PageServerLoad } from './$types';
 
-const MAX_METADATA_BYTES = 128 * 1024 * 1024;
 const RADIANS_PER_DEGREE = Math.PI / 180;
 
 interface SubmittedValues {
@@ -19,6 +18,7 @@ interface SubmittedValues {
   initialOurScore: string;
   initialOpponentScore: string;
   videoSource: string;
+  metadataSource: string;
   rigTiltDegrees: string;
   rigRollDegrees: string;
   fovDegrees: string;
@@ -55,26 +55,23 @@ export const actions: Actions = {
     const form = await request.formData();
     const values = submittedValues(form);
 
-    let metadataJsonl: string | undefined;
-    let metadata: MetadataTimeline | undefined;
     let updated = false;
     try {
-      const metadataFile = form.get('metadata');
-      if (metadataFile instanceof File && metadataFile.size > 0) {
-        if (metadataFile.size > MAX_METADATA_BYTES) {
-          return fail(413, {
-            action: 'saveGame',
-            error: 'Metadata files must be 128 MiB or smaller.',
-            values,
-          });
-        }
-        metadataJsonl = await metadataFile.text();
-        metadata = parseMetadataJsonl(metadataJsonl);
-      }
-
       const tournamentId = requiredInteger(values.tournamentId, 'Event');
       const videoSource = values.videoSource.trim()
         ? await validateVideoSource(values.videoSource)
+        : null;
+      const catalog = new CatalogRepository();
+      const existing = catalog.getGameAdminByToken(params.token);
+      if (!existing) error(404, 'Game not found.');
+      const submittedMetadataSource = values.metadataSource.trim();
+      if (videoSource && existing.metadataSource && !submittedMetadataSource) {
+        throw new Error('Metadata URL is required while this game has video.');
+      }
+      const replacesMetadata = videoSource !== null &&
+        submittedMetadataSource !== (existing.metadataSource ?? '');
+      const validatedMetadata = replacesMetadata
+        ? await validateMetadataSource(submittedMetadataSource)
         : null;
       const settings = parseGameViewerSettings({
         version: 1,
@@ -116,7 +113,7 @@ export const actions: Actions = {
         },
       });
 
-      updated = new CatalogRepository().updateGame(params.token, {
+      updated = catalog.updateGame(params.token, {
         tournamentId,
         title: values.title,
         opponentName: values.opponentName,
@@ -129,7 +126,12 @@ export const actions: Actions = {
         ),
         videoSource,
         settings,
-        ...(metadataJsonl === undefined ? {} : { metadataJsonl, metadata: metadata! }),
+        ...(validatedMetadata === null
+          ? {}
+          : {
+            metadataSource: validatedMetadata.source,
+            metadata: validatedMetadata.metadata,
+          }),
       });
     } catch (caught) {
       return fail(400, {
@@ -175,6 +177,7 @@ function submittedValues(form: FormData): SubmittedValues {
     initialOurScore: String(form.get('initialOurScore') ?? ''),
     initialOpponentScore: String(form.get('initialOpponentScore') ?? ''),
     videoSource: String(form.get('videoSource') ?? ''),
+    metadataSource: String(form.get('metadataSource') ?? ''),
     rigTiltDegrees: String(form.get('rigTiltDegrees') ?? ''),
     rigRollDegrees: String(form.get('rigRollDegrees') ?? ''),
     fovDegrees: String(form.get('fovDegrees') ?? ''),

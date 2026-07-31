@@ -3,7 +3,7 @@
 SvelteKit application for organizing panorama exports by team, recording
 timecoded game statistics, and viewing video through the reusable
 `UVSVideoViewer` component. SQLite stores teams, season rosters, tournaments,
-lines, editable point timelines, metadata, and camera settings.
+lines, editable point timelines, metadata references, and camera settings.
 
 ## Run locally
 
@@ -40,10 +40,13 @@ The route names below are application-relative; deployed URLs are prefixed with
   controls, with no login and no statistics.
 
 An administrator supplies either a server-local `file://` URL or an `http(s)`
-URL for each video. Browsers receive video through
+URL for each video and its panorama metadata JSONL. Browsers receive video through
 `/api/games/:token/video`, which supports byte ranges and does not expose local
-server paths. Metadata uploads are validated, retained as their original JSONL,
-and also stored in parsed form for `/api/games/:token/metadata`.
+server paths. The database stores only the metadata URL and its small validated
+manifest. `/api/games/:token/metadata` streams the large source through the
+application so remote CORS settings and server-local paths remain invisible to
+the viewer. Legacy database-backed metadata remains readable until an
+administrator replaces it with an external URL.
 
 ## Rosters and statistics
 
@@ -167,6 +170,7 @@ playback, panorama projection, overlays, and camera controls.
   import { resolve } from '$app/paths';
   import {
     UVSVideoViewer,
+    parseMetadataJsonl,
     type MetadataTimeline,
     type UVSVideoViewerSource,
     type UVSViewerPlaybackState,
@@ -178,7 +182,7 @@ playback, panorama projection, overlays, and camera controls.
     const response = await fetch(resolve('/api/games/game-token/metadata'));
     source = {
       videoUrl: resolve('/api/games/game-token/video'),
-      metadata: (await response.json()) as MetadataTimeline,
+      metadata: parseMetadataJsonl(await response.text()) as MetadataTimeline,
       videoName: 'Game 42',
       metadataName: 'Game 42 metadata',
     };

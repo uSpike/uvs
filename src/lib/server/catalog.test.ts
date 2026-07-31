@@ -90,7 +90,7 @@ function createPaperGame(
     title,
     playedAt,
     videoSource: null,
-    metadataJsonl: null,
+    metadataSource: null,
     metadata: null,
   });
 }
@@ -103,11 +103,11 @@ describe('CatalogRepository', () => {
       ...gameFields(tournamentFor(team.id)),
       title: 'Paper score sheet',
       videoSource: null,
-      metadataJsonl: null,
+      metadataSource: null,
       metadata: null,
     });
 
-    expect(game).toMatchObject({ hasVideo: false, videoSource: null, metadataJsonl: null });
+    expect(game).toMatchObject({ hasVideo: false, videoSource: null, metadataSource: null });
     expect(catalog.getGameViewByToken(game.token)).toMatchObject({ hasVideo: false });
     expect(catalog.getGameAdminByToken(game.token)).toMatchObject({
       hasVideo: false,
@@ -115,7 +115,7 @@ describe('CatalogRepository', () => {
       metadata: null,
     });
     expect(catalog.getVideoSourceByToken(game.token)).toBeNull();
-    expect(catalog.getMetadataJsonByToken(game.token)).toBeNull();
+    expect(catalog.getMetadataLocationByToken(game.token)).toBeNull();
     expect(catalog.resetGameSettings(game.token)).toMatchObject({
       rigTiltRadians: 0,
       rigRollRadians: 0,
@@ -135,7 +135,7 @@ describe('CatalogRepository', () => {
     ]);
   });
 
-  it('stores original and parsed metadata with one team-owned game', () => {
+  it('stores only a metadata URL and compact manifest with one team-owned game', () => {
     const catalog = repository();
     const team = catalog.createTeam('Union', 'team-password');
     const metadata = parseMetadataJsonl(metadataJsonl);
@@ -143,15 +143,31 @@ describe('CatalogRepository', () => {
       ...gameFields(tournamentFor(team.id)),
       title: 'Union vs. Surge',
       videoSource: 'file:///srv/video/union.mp4',
-      metadataJsonl,
+      metadataSource: 'https://metadata.example.test/union.metadata.jsonl',
       metadata,
     });
 
     expect(game.token).toHaveLength(24);
     expect(game.teamId).toBe(team.id);
-    expect(game.metadataJsonl).toBe(metadataJsonl);
-    expect(JSON.parse(game.metadataJson!)).toEqual(metadata);
+    expect(game.metadataSource).toBe('https://metadata.example.test/union.metadata.jsonl');
     expect(game.settings.rigTiltRadians).toBe(0.1);
+    expect(
+      databases.at(-1)!
+        .prepare(
+          `SELECT length(metadata_jsonl) AS jsonl_bytes,
+                  length(metadata_json) AS parsed_bytes,
+                  metadata_source,
+                  json_extract(metadata_manifest_json, '$.schema_version') AS schema_version
+             FROM games
+            WHERE id = ?`,
+        )
+        .get(game.id),
+    ).toEqual({
+      jsonl_bytes: 0,
+      parsed_bytes: 2,
+      metadata_source: 'https://metadata.example.test/union.metadata.jsonl',
+      schema_version: 3,
+    });
     expect(catalog.getGameViewByToken(game.token)).toMatchObject({
       title: 'Union vs. Surge',
       settings: { rigTiltRadians: 0.1 },
@@ -168,7 +184,7 @@ describe('CatalogRepository', () => {
       ...gameFields(tournamentFor(team.id)),
       title: 'Week 1',
       videoSource: 'https://video.example.test/week-1.mp4',
-      metadataJsonl,
+      metadataSource: 'https://metadata.example.test/week-1.metadata.jsonl',
       metadata,
     });
     const changed = {
@@ -194,7 +210,7 @@ describe('CatalogRepository', () => {
       ...gameFields(tournamentFor(team.id)),
       title: 'Game to remove',
       videoSource: null,
-      metadataJsonl: null,
+      metadataSource: null,
       metadata: null,
     });
 
@@ -258,24 +274,26 @@ describe('CatalogRepository', () => {
       ...gameFields(firstTournamentId),
       title: 'Week 1',
       videoSource: 'file:///srv/video/week-1.mp4',
-      metadataJsonl,
+      metadataSource: 'https://metadata.example.test/week-1.metadata.jsonl',
       metadata,
     });
 
     expect(catalog.getGameAdminByToken(game.token)).toMatchObject({
       videoSource: 'file:///srv/video/week-1.mp4',
+      metadataSource: 'https://metadata.example.test/week-1.metadata.jsonl',
       metadata: {
-        originalBytes: Buffer.byteLength(metadataJsonl),
+        storage: 'external',
+        originalBytes: null,
         schemaVersion: 3,
         sourcePath: 'game.mp4',
         videoWidth: 1920,
         videoHeight: 540,
-        detectionSampleCount: 1,
-        trackSampleCount: 0,
-        lastFrameIndex: 5,
       },
     });
-    expect(catalog.getMetadataJsonlByToken(game.token)).toBe(metadataJsonl);
+    expect(catalog.getMetadataLocationByToken(game.token)).toEqual({
+      kind: 'external',
+      source: 'https://metadata.example.test/week-1.metadata.jsonl',
+    });
 
     const replacementJsonl = metadataJsonl
       .replace('"path":"game.mp4"', '"path":"replacement.mp4"')
@@ -295,7 +313,7 @@ describe('CatalogRepository', () => {
         title: '  Union at Wind Chill  ',
         videoSource: 'https://video.example.test/replacement.mp4',
         settings,
-        metadataJsonl: replacementJsonl,
+        metadataSource: 'https://metadata.example.test/replacement.metadata.jsonl',
         metadata: replacementMetadata,
       }),
     ).toBe(true);
@@ -303,14 +321,67 @@ describe('CatalogRepository', () => {
       title: 'Union at Wind Chill',
       teamId: secondTeam.id,
       videoSource: 'https://video.example.test/replacement.mp4',
+      metadataSource: 'https://metadata.example.test/replacement.metadata.jsonl',
       settings: { fovDegrees: 62, autoCamera: { lookAheadSeconds: 2.2 } },
       metadata: {
         sourcePath: 'replacement.mp4',
         videoWidth: 2560,
         videoHeight: 720,
-        lastFrameIndex: 12,
       },
     });
-    expect(catalog.getMetadataJsonlByToken(game.token)).toBe(replacementJsonl);
+    expect(catalog.getMetadataLocationByToken(game.token)).toEqual({
+      kind: 'external',
+      source: 'https://metadata.example.test/replacement.metadata.jsonl',
+    });
+    expect(
+      databases.at(-1)!
+        .prepare('SELECT metadata_jsonl, metadata_json FROM games WHERE id = ?')
+        .get(game.id),
+    ).toEqual({ metadata_jsonl: '', metadata_json: '{}' });
+  });
+
+  it('keeps legacy inline metadata readable until an external URL is supplied', () => {
+    const catalog = repository();
+    const team = catalog.createTeam('Union', 'team-password');
+    const tournamentId = tournamentFor(team.id);
+    const game = createPaperGame(catalog, tournamentId, 'Legacy video');
+    const metadata = parseMetadataJsonl(metadataJsonl);
+    databases.at(-1)!
+      .prepare(
+        `UPDATE games
+            SET has_video = 1,
+                video_source = 'file:///srv/video/legacy.mp4',
+                metadata_jsonl = ?,
+                metadata_json = ?
+          WHERE id = ?`,
+      )
+      .run(metadataJsonl, JSON.stringify(metadata), game.id);
+
+    expect(catalog.getMetadataLocationByToken(game.token)).toEqual({
+      kind: 'legacy',
+      jsonl: metadataJsonl,
+    });
+    expect(catalog.getGameAdminByToken(game.token)).toMatchObject({
+      metadataSource: null,
+      metadata: { storage: 'database', originalBytes: Buffer.byteLength(metadataJsonl) },
+    });
+
+    expect(catalog.updateGame(game.token, {
+      ...gameFields(tournamentId),
+      title: game.title,
+      videoSource: 'file:///srv/video/legacy.mp4',
+      metadataSource: 'https://metadata.example.test/legacy.metadata.jsonl',
+      metadata,
+      settings: game.settings,
+    })).toBe(true);
+    expect(catalog.getMetadataLocationByToken(game.token)).toEqual({
+      kind: 'external',
+      source: 'https://metadata.example.test/legacy.metadata.jsonl',
+    });
+    expect(
+      databases.at(-1)!
+        .prepare('SELECT metadata_jsonl, metadata_json FROM games WHERE id = ?')
+        .get(game.id),
+    ).toEqual({ metadata_jsonl: '', metadata_json: '{}' });
   });
 });

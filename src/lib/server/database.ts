@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const DATABASE_VERSION = 21;
+const DATABASE_VERSION = 22;
 
 let applicationDatabase: Database.Database | null = null;
 
@@ -661,8 +661,25 @@ export function migrateDatabase(database: Database.Database): void {
       ensureGameSortOrder(database);
     }
 
+    if (currentVersion < 22) {
+      ensureMetadataSourceColumns(database);
+    }
+
     database.pragma(`user_version = ${DATABASE_VERSION}`);
   })();
+}
+
+function ensureMetadataSourceColumns(database: Database.Database): void {
+  const columns = database.pragma('table_info(games)') as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'metadata_source')) {
+    database.exec(`ALTER TABLE games ADD COLUMN metadata_source TEXT NOT NULL DEFAULT '';`);
+  }
+  if (!columns.some((column) => column.name === 'metadata_manifest_json')) {
+    database.exec(`
+      ALTER TABLE games ADD COLUMN metadata_manifest_json TEXT NOT NULL DEFAULT '{}'
+        CHECK (json_valid(metadata_manifest_json));
+    `);
+  }
 }
 
 function ensureManualGoalParticipantColumns(database: Database.Database): void {

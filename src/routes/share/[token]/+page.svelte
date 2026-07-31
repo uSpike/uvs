@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MetadataTimeline } from '$lib/metadata';
+  import { parseMetadataJsonl, type MetadataTimeline } from '$lib/metadata';
   import { UVSVideoViewer, type UVSVideoViewerSource } from '$lib';
 
   let { data } = $props();
@@ -13,7 +13,7 @@
     void fetch(data.game.metadataUrl, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error('This share link is no longer available.');
-        return response.json() as Promise<MetadataTimeline>;
+        return response.text().then(parseMetadataJsonl);
       })
       .then((metadata) => {
         source = {
